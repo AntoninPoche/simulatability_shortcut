@@ -12,7 +12,7 @@
 #   python scripts/build_concepts.py BIOS  --method ica    --interpretation topk
 #   python scripts/build_concepts.py BIOS  --method kmeans --interpretation topk
 #
-# Flags (store_true arguments like --activations-difference) are forwarded as-is.
+# Flags (store_true arguments like --thinking) are forwarded as-is.
 
 set -euo pipefail
 

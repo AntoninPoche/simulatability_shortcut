@@ -118,11 +118,6 @@ def parse_args() -> argparse.Namespace:
         help="Number of concepts = nb_classes * ratio (default: 3).",
     )
     parser.add_argument(
-        "--activations-difference",
-        action="store_true",
-        help="Use pair-wise activation differences for concept fitting.",
-    )
-    parser.add_argument(
         "--interpretation",
         choices=sorted(INTERPRETATION_NAMES.keys()),
         default="topk",

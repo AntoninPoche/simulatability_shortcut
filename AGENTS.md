@@ -89,13 +89,13 @@ pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 ## CLI Arguments Reference
 
 ### `build_concepts.py`
-`--dataset` (GE/HE/BIOS/E), `--method` (seminmf/ica/kmeans/pca/svd), `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--activations-difference`, `--llm-model`, `--device`, `--batch-size`
+`--dataset` (GE/HE/BIOS/E), `--method` (seminmf/ica/kmeans/pca/svd), `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--llm-model`, `--device`, `--batch-size`
 
 ### `make_prompts.py`
-`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--interpretation`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
 
 ### `make_prompts_old_consim.py`
-`--dataset`, `--method`, `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
+`--dataset`, `--method`, `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
 
 ### `local_llm_scoring.py`
 `--judge-model`, `--prompt-file`, `--thinking`/`--no-thinking`, `--max-new-tokens`, `--generation-batch-size`, `--device`

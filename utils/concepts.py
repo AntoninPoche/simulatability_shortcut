@@ -361,27 +361,6 @@ def save_concept_model(concept_explainer, model_path: Path) -> None:
     )
 
 
-def compute_activations_difference(
-    activations: torch.Tensor, p: int = 10
-) -> torch.Tensor:
-    """
-    Compute the pair-wise activations differences.
-    For each activation, we compute p pair-wise differences.
-    """
-    n = activations.shape[0]
-
-    # indices of the left partners
-    left_indices = torch.arange(n).repeat(p)
-
-    # indices of the right partners
-    # For each i, sample p partners excluding in [0, n-1] excluding i
-    random = torch.randint(0, n - 1, (n, p), dtype=torch.long)
-    reference = torch.arange(n).unsqueeze(1)
-    right_indices = (random + (random >= reference)).view(-1)
-
-    return activations[left_indices] - activations[right_indices]
-
-
 def load_or_fit_concept_model(
     splitter,
     concept_dir: Path,
@@ -389,7 +368,6 @@ def load_or_fit_concept_model(
     method,
     nb_concepts: int,
     device,
-    activations_difference: bool = False,
 ):
     concept_explainer = method(
         splitter,
@@ -403,8 +381,6 @@ def load_or_fit_concept_model(
             concept_explainer, concept_model_path, device
         )
     else:
-        if activations_difference:
-            activations = compute_activations_difference(activations, p=10)
         concept_explainer.fit(activations)
         save_concept_model(concept_explainer, concept_model_path)
     return concept_explainer
@@ -560,7 +536,6 @@ def prepare_concept_explanation_resources(
     classes: list[str],
     method,
     nb_concepts_ratio: int | float,
-    activations_difference: bool,
     interpretation,
     llm_model: str | None,
     device: str,
@@ -573,10 +548,7 @@ def prepare_concept_explanation_resources(
     method_name = name_for(method)[:-8]  # remove "Concepts" suffix
     interpretation_name = name_for(interpretation)
     nb_concepts = int(len(classes) * nb_concepts_ratio)
-    diff_str = "_diff" if activations_difference else ""
-    concept_dir = (
-        save_root / "concept_models" / f"{method_name}{diff_str}_nc{nb_concepts}"
-    )
+    concept_dir = save_root / "concept_models" / f"{method_name}_nc{nb_concepts}"
     concept_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep the task model loading local to the concept-specific preparation step.
@@ -604,7 +576,6 @@ def prepare_concept_explanation_resources(
         method=method,
         nb_concepts=nb_concepts,
         device=device,
-        activations_difference=activations_difference,
     )
     concepts_interpretation = load_or_compute_interpretations(
         concept_explainer=concept_explainer,
@@ -728,11 +699,9 @@ def get_concept_dir(
     save_root: Path,
     method_name: str,
     nb_concepts: int,
-    activations_difference: bool,
 ) -> Path:
     """Reconstruct the concept_dir path from parameters."""
-    diff_str = "_diff" if activations_difference else ""
-    return save_root / "concept_models" / f"{method_name}{diff_str}_nc{nb_concepts}"
+    return save_root / "concept_models" / f"{method_name}_nc{nb_concepts}"
 
 
 def load_concept_explanation_resources(
@@ -740,7 +709,6 @@ def load_concept_explanation_resources(
     save_root: Path,
     method_name: str,
     nb_concepts: int,
-    activations_difference: bool,
     interpretation_name: str,
     classes: list[str],
     device: str = "cpu",
@@ -754,7 +722,6 @@ def load_concept_explanation_resources(
         save_root=save_root,
         method_name=method_name,
         nb_concepts=nb_concepts,
-        activations_difference=activations_difference,
     )
 
     # Check concept model exists (we don't load it — not needed for prompts).
