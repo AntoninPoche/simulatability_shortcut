@@ -1,13 +1,14 @@
 """Generate ConSim prompt JSONL for simulatability experiments.
 
-Supports two explanation families (concepts and rationales) and iterates over
-all canonical class subsets for the chosen dataset.
+Supports three explanation families (concepts, rationales, and attributions) and
+iterates over all canonical class subsets for the chosen dataset.
 
 Usage examples::
 
     python scripts/make_prompts.py --dataset GE --explanation-family concepts --method seminmf
     python scripts/make_prompts.py --dataset BIOS --explanation-family rationales --method Qwen/Qwen3.5-9B
     python scripts/make_prompts.py --dataset HE --explanation-family concepts --method ica --interpretation topk
+    python scripts/make_prompts.py --dataset GE --explanation-family attributions --method saliency
 
 Output is written to ``data/prompts/{dataset_abbrev}_{explanation_family}.jsonl``.
 Existing keys in the output file are skipped (append-only, resumable).
@@ -55,6 +56,15 @@ from utils.ratsim import (
     RationalePromptTypes,
     RationalesSimulatability,
 )
+from utils.attributions import (
+    ATTRIBUTION_METHODS,
+    load_or_compute_attributions,
+    group_attributions_by_seed,
+)
+from utils.attrsim import (
+    AttrSim,
+    PromptTypes as AttrPromptTypes,
+)
 
 # ---------------------------------------------------------------------------
 # Reverse lookups: dataset abbreviation → dataset name → model name.
@@ -88,6 +98,12 @@ RATIONALE_PROMPT_TYPES = {
     RationalePromptTypes.R1_justify_with_lp,
 }
 
+ATTRIBUTION_PROMPT_TYPES = {
+    AttrPromptTypes.B1_baseline_without_lp,
+    AttrPromptTypes.B2_baseline_with_lp,
+    AttrPromptTypes.A1_attribution_with_lp,
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -101,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--explanation-family",
-        choices=["concepts", "rationales"],
+        choices=["concepts", "rationales", "attributions"],
         required=True,
         help="Explanation family to generate prompts for.",
     )
@@ -109,7 +125,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         required=True,
-        help=f"Concept extraction method (seminmf, ica, kmeans, pca, svd) or rationale model short name/path. Short names: {', '.join(LLM_MODELS.keys())}.",
+        help=(
+            "Explanation method. For concepts: seminmf, ica, kmeans, pca, svd. "
+            f"For rationales: model short name/path ({', '.join(LLM_MODELS.keys())}). "
+            f"For attributions: {', '.join(ATTRIBUTION_METHODS.keys())}."
+        ),
     )
     parser.add_argument(
         "--nb-concepts-ratio",
@@ -195,10 +215,14 @@ def generate_prompts_for_subset(
         prompt_types = CONCEPT_PROMPT_TYPES
         simulatability_metric = ConSim(classes=classes)
         specification = "new_consim"
-    else:
+    elif explanation_family == "rationales":
         prompt_types = RATIONALE_PROMPT_TYPES
         simulatability_metric = RationalesSimulatability(classes=classes)
         specification = "rationales"
+    else:
+        prompt_types = ATTRIBUTION_PROMPT_TYPES
+        simulatability_metric = AttrSim(classes=classes)
+        specification = "attributions"
 
     # Load or compute local elements (seed → sample selection).
     local_elements_by_seed = load_or_compute_local_elements(
@@ -215,6 +239,7 @@ def generate_prompts_for_subset(
     # Prepare explanation-specific resources.
     concept_resources = None
     rationale_by_seed = None
+    attribution_by_seed = None
 
     if explanation_family == "concepts":
         nb_concepts = int(len(classes) * args.nb_concepts_ratio)
@@ -223,11 +248,10 @@ def generate_prompts_for_subset(
             save_root=save_root,
             method_name=args.method,
             nb_concepts=nb_concepts,
-            activations_difference=args.activations_difference,
             interpretation_name=interpretation_name,
             classes=classes,
         )
-    else:
+    elif explanation_family == "rationales":
         # Rationale path: generate rationales for all samples used by any seed.
         seed_indices = {
             seed: list(local_elements_by_seed[seed]["indices"]) for seed in seeds
@@ -249,6 +273,29 @@ def generate_prompts_for_subset(
         )
         rationale_by_seed = group_rationales_by_seed(
             rationales=rationales,
+            seed_indices=seed_indices,
+        )
+    else:
+        # Attribution path: compute attributions for all samples used by any seed.
+        seed_indices = {
+            seed: list(local_elements_by_seed[seed]["indices"]) for seed in seeds
+        }
+        required_test_indices = sorted(
+            {index for indices in seed_indices.values() for index in indices}
+        )
+        attributions = load_or_compute_attributions(
+            model_name=model_name,
+            inputs=[test_inputs[index] for index in required_test_indices],
+            predictions=test_predictions[required_test_indices],
+            sample_ids=required_test_indices,
+            method=args.method,
+            save_root=save_root,
+            device=args.device,
+            batch_size=args.batch_size,
+            dataset_name=dataset_name,
+        )
+        attribution_by_seed = group_attributions_by_seed(
+            attributions=attributions,
             seed_indices=seed_indices,
         )
 
@@ -276,8 +323,10 @@ def generate_prompts_for_subset(
                     sample_indices=local_indices,
                     nb_learning_samples=nb_learning_samples,
                 )
-            else:
+            elif explanation_family == "rationales":
                 local_rationales = rationale_by_seed[seed]
+            else:
+                local_attributions = attribution_by_seed[seed]
 
             for prompt_type, anonym in itertools.product(prompt_types, [True, False]):
                 prompt_type_name = prompt_type.name.split("_")[0]
@@ -297,12 +346,19 @@ def generate_prompts_for_subset(
                         "global_importances": concept_resources.global_importances,
                         "local_importances": local_explanation.local_importances,
                     }
-                else:
+                elif explanation_family == "rationales":
                     method_name = args.method if not is_baseline else "baseline"
                     nb_concepts = None
                     interpretation_name = None
                     construct_prompt_kwargs = {
                         "rationales": local_rationales,
+                    }
+                else:
+                    method_name = args.method if not is_baseline else "baseline"
+                    nb_concepts = None
+                    interpretation_name = None
+                    construct_prompt_kwargs = {
+                        "corresponding_attribution": local_attributions,
                     }
 
                 str_key = str(
