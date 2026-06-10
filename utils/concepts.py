@@ -311,7 +311,7 @@ def compute_activations_difference(
 
 
 def load_or_fit_concept_model(
-    model_with_split_points,
+    splitter,
     concept_dir: Path,
     activations: torch.Tensor,
     method,
@@ -320,7 +320,7 @@ def load_or_fit_concept_model(
     activations_difference: bool = False,
 ):
     concept_explainer = method(
-        model_with_split_points,
+        splitter,
         nb_concepts=nb_concepts,
         device=device,
     )
@@ -344,7 +344,6 @@ def load_or_compute_interpretations(
     interpretation,
     concept_dir: Path,
     llm_model: str | None,
-    granularity,
     classes_names,
     *,
     dataset_name: str | None = None,
@@ -387,7 +386,6 @@ def load_or_compute_interpretations(
 
         llm_labels_kwargs: dict[str, Any] = {
             "concept_explainer": concept_explainer,
-            "activation_granularity": granularity,
             "llm_interface": OpenAILLM(
                 api_key=os.getenv("OPENAI_API_KEY"), model=llm_model
             ),
@@ -435,7 +433,6 @@ def load_or_compute_interpretations(
         topk_inputs_method = TopKInputs(
             concept_explainer=concept_explainer,
             k=topk_config["k"],
-            activation_granularity=granularity,
             use_unique_words=topk_config["use_unique_words"],
             unique_words_kwargs=topk_config["unique_words_kwargs"],
         )
@@ -462,7 +459,6 @@ def load_or_compute_global_importances(
     validation_inputs: list[str],
     concept_dir: Path,
     device,
-    granularity,
     batch_size,
 ) -> torch.Tensor:
     importances_path = concept_dir / "importances.pt"
@@ -471,7 +467,6 @@ def load_or_compute_global_importances(
     else:
         gradients = concept_explainer.concept_output_gradient(
             inputs=validation_inputs,
-            activation_granularity=granularity,
             concepts_x_gradients=True,
             batch_size=batch_size,
         )
@@ -497,7 +492,7 @@ def prepare_concept_explanation_resources(
     device: str,
     batch_size: int,
 ) -> GlobalConceptExplanation:
-    from interpreto import ModelWithSplitPoints
+    from interpreto import SplitterForClassification
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
     from utils.data import load_or_compute_activations
 
@@ -509,31 +504,27 @@ def prepare_concept_explanation_resources(
         save_root / "concept_models" / f"{method_name}{diff_str}_nc{nb_concepts}"
     )
     concept_dir.mkdir(parents=True, exist_ok=True)
-    granularity = ModelWithSplitPoints.activation_granularities.CLS_TOKEN
 
     # Keep the task model loading local to the concept-specific preparation step.
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model_with_split_points = ModelWithSplitPoints(
+    splitter = SplitterForClassification(
         model,
         tokenizer=tokenizer,
-        automodel=AutoModelForSequenceClassification,  # type: ignore
-        split_points=split_point,
         device_map=device,
         batch_size=batch_size,
     )
 
     activations = load_or_compute_activations(
-        model_with_split_points=model_with_split_points,
+        splitter=splitter,
         train_inputs=train_inputs,
         activations_path=save_root / "activations.pt",
         device=device,
-        granularity=granularity,
     )
     if isinstance(activations, dict):
-        activations = model_with_split_points.get_split_activations(activations)
+        activations = splitter.get_split_activations(activations)
     concept_explainer = load_or_fit_concept_model(
-        model_with_split_points=model_with_split_points,
+        splitter=splitter,
         concept_dir=concept_dir,
         activations=activations,
         method=method,
@@ -547,7 +538,6 @@ def prepare_concept_explanation_resources(
         interpretation=interpretation,
         concept_dir=concept_dir,
         llm_model=llm_model,
-        granularity=granularity,
         classes_names=classes,
         dataset_name=dataset_name,
         model_name=model_name,
@@ -557,7 +547,6 @@ def prepare_concept_explanation_resources(
         validation_inputs=validation_inputs,
         concept_dir=concept_dir,
         device=device,
-        granularity=granularity,
         batch_size=batch_size,
     )
 
@@ -578,12 +567,9 @@ def compute_local_concept_explanation(
     local_inputs: list[str],
     nb_learning_samples: int,
 ) -> LocalConceptExplanation:
-    from interpreto import ModelWithSplitPoints
-
     # Only the learning-phase samples are used to build local concept explanations.
     local_importances = global_explanation.concept_explainer.concept_output_gradient(
         inputs=local_inputs[:nb_learning_samples],  # type: ignore
-        activation_granularity=ModelWithSplitPoints.activation_granularities.CLS_TOKEN,
         concepts_x_gradients=True,
     )
     local_importances = [

@@ -41,7 +41,7 @@ data/                         # Gitignored artifacts: activations, predictions, 
 ## Import Architecture
 
 - **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `rationales_simulatability.py` — these are the canonical implementations, not imported from interpreto.
-- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `ModelWithSplitPoints`, `LLMLabels`, `TopKInputs`. These are the heavy ML components we don't need to modify.
+- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, `LLMLabels`, `TopKInputs`. These are the heavy ML components we don't need to modify.
 - All scripts add the repo root to `sys.path` so `from utils.* import ...` works when running `python scripts/foo.py`.
 
 ## Commands

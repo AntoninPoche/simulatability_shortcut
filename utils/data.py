@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import torch
-    from interpreto import ModelWithSplitPoints
+    from interpreto import SplitterForClassification
     from utils.simulatability import AutomatedSimulatability
 
 MODELS_DATASETS = {
@@ -120,10 +120,10 @@ MODEL_SPLIT_POINTS = {
 # All subsets for a given dataset are run together.
 DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
     "google-research-datasets/go_emotions": [
-        [2, 3, 27],    # anger, annoyance, neutral
-        [2, 3, 9, 10], # anger, annoyance, disappointment, disapproval
-        [6, 7],        # confusion, curiosity
-        [0, 4, 5],     # admiration, approval, caring
+        [2, 3, 27],  # anger, annoyance, neutral
+        [2, 3, 9, 10],  # anger, annoyance, disappointment, disapproval
+        [6, 7],  # confusion, curiosity
+        [0, 4, 5],  # admiration, approval, caring
     ],
     "dair-ai/emotion": [
         [0, 1, 2, 3, 4, 5],  # all classes
@@ -132,10 +132,10 @@ DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
         [0, 1, 2],  # all classes
     ],
     "LabHC/bias_in_bios": [
-        [0, 11, 25],   # surgeon, physician, dentist
-        [3, 6, 26],    # professor, teacher, psychologist
-        [3, 5, 13],    # professor, software_developer, architect
-        [2, 12, 21],   # photographer, journalist, filmmaker
+        [0, 11, 25],  # surgeon, physician, dentist
+        [3, 6, 26],  # professor, teacher, psychologist
+        [3, 5, 13],  # professor, software_developer, architect
+        [2, 12, 21],  # photographer, journalist, filmmaker
     ],
 }
 
@@ -211,24 +211,21 @@ def load_dataset_splits(dataset: str):
 
 
 def load_or_compute_activations(
-    model_with_split_points: ModelWithSplitPoints,
+    splitter: SplitterForClassification,
     train_inputs: list[str],
     activations_path: Path,
     device: str,
-    granularity,
 ) -> list[torch.Tensor]:
     import torch
 
     if activations_path.exists():
         return torch.load(activations_path, map_location=device)
 
-    activations_dict = model_with_split_points.get_activations(
+    activations, predictions = splitter.get_activations(
         inputs=train_inputs,
-        activation_granularity=granularity,
         include_predicted_classes=True,
         tqdm_bar=True,
     )
-    activations = model_with_split_points.get_split_activations(activations_dict)
     torch.save(activations, activations_path)
     return activations  # type: ignore
 
