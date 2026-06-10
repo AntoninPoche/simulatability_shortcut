@@ -76,11 +76,11 @@ INTERPRETATIONS = {
 
 # Old ConSim prompt types (subset relevant for comparison).
 OLD_PROMPT_TYPES = {
-    OldPromptTypes.L1_baseline_without_lp,
-    OldPromptTypes.E1_global_concepts_without_lp,
-    OldPromptTypes.L2_baseline_with_lp,
-    OldPromptTypes.E2_global_concepts_with_lp,
-    OldPromptTypes.E3_global_and_local_concepts_with_lp,
+    OldPromptTypes.B1_baseline_without_lp,
+    OldPromptTypes.C1_global_concepts_without_lp,
+    OldPromptTypes.B2_baseline_with_lp,
+    OldPromptTypes.C2_global_concepts_with_lp,
+    OldPromptTypes.C3_global_and_local_concepts_with_lp,
 }
 
 
@@ -288,17 +288,18 @@ def main() -> None:
                 lp_local_importances = (
                     concept_resources.concept_explainer.concept_output_gradient(
                         inputs=local_inputs[:nb_learning_samples],
-                        activation_granularity=(
-                            concept_resources.concept_explainer._splitter.activation_granularities.CLS_TOKEN
-                        ),
                         concepts_x_gradients=True,
                     )
                 )
                 # Each element is (1, nb_classes, nb_concepts), we need per-predicted-class.
-                old_local_importances = torch.stack([
-                    lp_local_importances[i].squeeze(0)[int(local_predictions[i].item())]
-                    for i in range(nb_learning_samples)
-                ])
+                old_local_importances = torch.stack(
+                    [
+                        lp_local_importances[i].squeeze(0)[
+                            int(local_predictions[i].item())
+                        ]
+                        for i in range(nb_learning_samples)
+                    ]
+                )
 
                 for prompt_type in OLD_PROMPT_TYPES:
                     for anonym in [True, False]:
@@ -306,7 +307,9 @@ def main() -> None:
                         prompt_type_name = prompt_type.name.split("_")[0]
                         is_baseline = "baseline" in prompt_type.name
                         method_name = (
-                            concept_resources.method_name if not is_baseline else "baseline"
+                            concept_resources.method_name
+                            if not is_baseline
+                            else "baseline"
                         )
 
                         str_key = str(
@@ -318,7 +321,9 @@ def main() -> None:
                                 method_name,
                                 concept_resources.nb_concepts,
                                 concept_resources.interpretation_name,
-                                prompt_type_name if not anonym else "A" + prompt_type_name,
+                                prompt_type_name
+                                if not anonym
+                                else "A" + prompt_type_name,
                                 "old_consim",
                             )
                         )
@@ -331,15 +336,19 @@ def main() -> None:
                             predictions=local_predictions,
                             classes=[classes[c] for c in classes_subset],
                             concepts_interpretation=concept_resources.concepts_interpretation,
-                            global_importances=old_global_importances if not is_baseline else None,
-                            local_importances=old_local_importances if not is_baseline else None,
+                            global_importances=old_global_importances
+                            if not is_baseline
+                            else None,
+                            local_importances=old_local_importances
+                            if not is_baseline
+                            else None,
                             prompt_type=prompt_type,
                             anonymize_classes=anonym,
                         )
 
                         # Extract system_prompt and user_prompt from Role-tagged list.
                         system_prompt = prompt[0][1]  # (Role.SYSTEM, text)
-                        user_prompt = prompt[1][1]    # (Role.USER, text)
+                        user_prompt = prompt[1][1]  # (Role.USER, text)
 
                         with open(output_path, "a") as handle:
                             json.dump(
