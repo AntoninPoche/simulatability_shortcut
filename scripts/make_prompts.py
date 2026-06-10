@@ -1,5 +1,21 @@
+"""Generate ConSim prompt JSONL for simulatability experiments.
+
+Supports two explanation families (concepts and rationales) and iterates over
+all canonical class subsets for the chosen dataset.
+
+Usage examples::
+
+    python scripts/make_prompts.py --dataset GE --explanation-family concepts --method seminmf
+    python scripts/make_prompts.py --dataset BIOS --explanation-family rationales --method Qwen/Qwen3.5-9B
+    python scripts/make_prompts.py --dataset HE --explanation-family concepts --method ica --interpretation topk
+
+Output is written to ``data/prompts/{dataset_abbrev}_{explanation_family}.jsonl``.
+Existing keys in the output file are skipped (append-only, resumable).
+"""
+
 from __future__ import annotations
 
+import argparse
 import itertools
 import json
 import sys
@@ -12,20 +28,27 @@ if __package__ in {None, ""}:
     # Allow `python scripts/make_prompts.py` to resolve the repo-local `utils` package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from interpreto.concepts import SemiNMFConcepts
-from interpreto.concepts.interpretations import LLMLabels
-from interpreto.concepts.metrics.simulatability.consim import PromptTypes, ConSim
+from interpreto.concepts import (
+    ICAConcepts,
+    KMeansConcepts,
+    PCAConcepts,
+    SemiNMFConcepts,
+    SVDConcepts,
+)
+from interpreto.concepts.interpretations import LLMLabels, TopKInputs
 
 from utils.concepts import (
     compute_local_concept_explanation,
     prepare_concept_explanation_resources,
 )
+from utils.consim import ConSim, PromptTypes
 from utils.data import (
     ABBREVIATIONS,
-    MODELS_DATASETS,
     DATASET_CLASSES_NAMES,
-    get_save_root,
+    DATASET_CLASSES_SUBSETS,
+    MODELS_DATASETS,
     MODEL_SPLIT_POINTS,
+    get_save_root,
     iter_jsonl,
     load_dataset_splits,
     load_or_compute_local_elements,
@@ -40,227 +63,310 @@ from utils.rationales_simulatability import (
     RationalesSimulatability,
 )
 
-DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
-
-# -----------
-# MODEL_NAME = "Hate-speech-CNERG/bert-base-uncased-hatexplain"
-# CLASSES_SUBSET = [0, 1, 2]
-
-# -----------
-# MODEL_NAME = "SamLowe/roberta-base-go_emotions"
-# CLASSES_SUBSET = [2, 3, 27]  # anger, annoyance, neutral
-# CLASSES_SUBSET = [2, 3, 9, 10]  # anger, annoyance, disappointment, disapproval
-# CLASSES_SUBSET = [6, 7]  # confusion, curiosity
-# CLASSES_SUBSET = [0, 4, 5]  # admiration, approval, caring
-
-# ----
-MODEL_NAME = "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/"
-# CLASSES_SUBSET = [0, 11, 25]  # surgeon, physician, dentist
-# CLASSES_SUBSET = [3, 6, 26]  # professor, teacher, psychologist
-# CLASSES_SUBSET = [3, 5, 13]  # professor, software_developer, architect
-CLASSES_SUBSET = [2, 12, 21]  # photographer, journalist, filmmaker
-
-
-# Shared prompt-generation flow configuration.
-EXPLANATION_FAMILY = "rationales"  # "concepts"  #
-
-# Concept-based explanation configuration.
-PARAMETERS = {
-    "concepts": {
-        "method": SemiNMFConcepts,
-        "nb_concepts_ratio": 3,
-        "activations_difference": False,
-        "interpretation": LLMLabels,
-        "llm_model": "gpt-4.1-nano",
-    },
-    "rationales": {
-        "model_name": "Qwen/Qwen3.5-9B",
-        "batch_size": 32,
-        "max_new_tokens": 64,
-    },
+# ---------------------------------------------------------------------------
+# Reverse lookups: dataset abbreviation → dataset name → model name.
+# ---------------------------------------------------------------------------
+_ABBREV_TO_DATASET: dict[str, str] = {
+    v: k for k, v in ABBREVIATIONS["datasets"].items()
 }
-PROMPT_TYPES = {
-    "concepts": {
-        PromptTypes.L1_baseline_without_lp,
-        PromptTypes.E1_global_concepts_without_lp,
-        PromptTypes.L2_baseline_with_lp,
-        PromptTypes.E2_global_concepts_with_lp,
-        PromptTypes.E3_global_and_local_concepts_with_lp,
-        PromptTypes.C1_contrastive_global_concepts_without_lp,
-        PromptTypes.C2_contrastive_global_concepts_with_lp,
-        PromptTypes.C3_contrastive_global_and_local_concepts_with_lp,
-        PromptTypes.C4_contrastive_local_concepts,
-        PromptTypes.C5_contrastive_local_only,
-    },
-    "rationales": {
-        RationalePromptTypes.L1_baseline_without_lp,
-        RationalePromptTypes.L2_baseline_with_lp,
-        RationalePromptTypes.R_justify_with_lp,
-        RationalePromptTypes.RC_contrastive_with_lp,
-    },
+_DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
+
+# Concept extraction methods available as CLI choices.
+METHODS = {
+    "seminmf": SemiNMFConcepts,
+    "ica": ICAConcepts,
+    "kmeans": KMeansConcepts,
+    "pca": PCAConcepts,
+    "svd": SVDConcepts,
 }
-SIMULATABILITY_METRICS = {
-    "concepts": ConSim,
-    "rationales": RationalesSimulatability,
+
+# Interpretation methods for concept labeling.
+INTERPRETATIONS = {
+    "llm": LLMLabels,
+    "topk": TopKInputs,
 }
-prompt_types = PROMPT_TYPES[EXPLANATION_FAMILY]
 
-SEEDS = list(range(50))
-NB_SAMPLES = 20
-BATCH_SIZE = 64
-SPECIFICATION = (
-    "verbalized importance" if EXPLANATION_FAMILY == "concepts" else "rationales"
-)
+# Prompt types for each explanation family.
+CONCEPT_PROMPT_TYPES = {
+    PromptTypes.L1_baseline_without_lp,
+    PromptTypes.E1_global_concepts_without_lp,
+    PromptTypes.L2_baseline_with_lp,
+    PromptTypes.E2_global_concepts_with_lp,
+    PromptTypes.E3_global_and_local_concepts_with_lp,
+    PromptTypes.C1_contrastive_global_concepts_without_lp,
+    PromptTypes.C2_contrastive_global_concepts_with_lp,
+    PromptTypes.C3_contrastive_global_and_local_concepts_with_lp,
+    PromptTypes.C4_contrastive_local_concepts,
+    PromptTypes.C5_contrastive_local_only,
+}
 
-OUTPUT_PATH = Path("data/consim_prompts.jsonl")
+RATIONALE_PROMPT_TYPES = {
+    RationalePromptTypes.L1_baseline_without_lp,
+    RationalePromptTypes.L2_baseline_with_lp,
+    RationalePromptTypes.R_justify_with_lp,
+    RationalePromptTypes.RC_contrastive_with_lp,
+}
 
 
-if __name__ == "__main__":
-    if OUTPUT_PATH.exists():
-        existing_keys = {
-            prompt_group["key"] for prompt_group in iter_jsonl(OUTPUT_PATH)
-        }
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate ConSim prompt JSONL for simulatability experiments.",
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=sorted(_ABBREV_TO_DATASET.keys()),
+        required=True,
+        help="Dataset abbreviation (e.g. GE, HE, BIOS, E).",
+    )
+    parser.add_argument(
+        "--explanation-family",
+        choices=["concepts", "rationales"],
+        required=True,
+        help="Explanation family to generate prompts for.",
+    )
+    # Concept-specific arguments
+    parser.add_argument(
+        "--method",
+        required=True,
+        help="Concept extraction method (seminmf, ica, kmeans, pca, svd) or rationale model name (e.g. Qwen/Qwen3.5-9B).",
+    )
+    parser.add_argument(
+        "--nb-concepts-ratio",
+        type=float,
+        default=3,
+        help="Number of concepts = nb_classes * ratio (default: 3).",
+    )
+    parser.add_argument(
+        "--activations-difference",
+        action="store_true",
+        help="Use pair-wise activation differences for concept fitting.",
+    )
+    parser.add_argument(
+        "--interpretation",
+        choices=sorted(INTERPRETATIONS.keys()),
+        default="topk",
+        help="Interpretation method for concept labeling (default: topk).",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="gpt-4.1-nano",
+        help="LLM model for LLMLabels interpretation (default: gpt-4.1-nano).",
+    )
+    # Rationale-specific arguments
+    parser.add_argument(
+        "--rationale-batch-size",
+        type=int,
+        default=32,
+        help="Batch size for rationale generation (default: 32).",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=64,
+        help="Max new tokens for rationale generation (default: 64).",
+    )
+    # General arguments
+    parser.add_argument(
+        "--seeds",
+        default="0-49",
+        help="Seed range (e.g. '0-49') or comma-separated list (e.g. '0,1,2').",
+    )
+    parser.add_argument(
+        "--nb-samples",
+        type=int,
+        default=20,
+        help="Number of samples per seed (default: 20).",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device for computation.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size for model inference (default: 64).",
+    )
+    return parser.parse_args()
+
+
+def parse_seeds(seeds_str: str) -> list[int]:
+    """Parse seed specification: '0-49' → [0..49] or '0,1,5' → [0, 1, 5]."""
+    if "-" in seeds_str and "," not in seeds_str:
+        start, end = seeds_str.split("-")
+        return list(range(int(start), int(end) + 1))
+    return [int(s) for s in seeds_str.split(",")]
+
+
+def get_output_path(dataset_abbrev: str, explanation_family: str) -> Path:
+    """Output JSONL path split by dataset and explanation family."""
+    return Path(f"data/prompts/{dataset_abbrev}_{explanation_family}.jsonl")
+
+
+def generate_prompts_for_subset(
+    *,
+    args: argparse.Namespace,
+    classes_subset: list[int],
+    dataset_name: str,
+    model_name: str,
+    split_point: str | int,
+    save_root: Path,
+    train_inputs: list[str],
+    validation_inputs: list[str],
+    test_inputs: list[str],
+    test_labels: torch.Tensor,
+    test_predictions: torch.Tensor,
+    classes: list[str],
+    seeds: list[int],
+    output_path: Path,
+    existing_keys: set[str],
+) -> int:
+    """
+    Generate prompts for one class subset. Returns number of new prompts written.
+    """
+    explanation_family = args.explanation_family
+
+    # Determine prompt types and simulatability metric.
+    if explanation_family == "concepts":
+        prompt_types = CONCEPT_PROMPT_TYPES
+        simulatability_metric = ConSim(classes=classes)
+        specification = "verbalized importance"
     else:
-        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        existing_keys = set()
+        prompt_types = RATIONALE_PROMPT_TYPES
+        simulatability_metric = RationalesSimulatability(classes=classes)
+        specification = "rationales"
 
-    # Dataset resources are loaded once and reused across prompt types.
-    dataset_name = MODELS_DATASETS[MODEL_NAME]
-    split_point = MODEL_SPLIT_POINTS[MODEL_NAME]
-    save_root = get_save_root(MODEL_NAME, split_point)
-    save_root.mkdir(parents=True, exist_ok=True)
-
-    # load data
-    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
-        dataset_name
-    )
-    classes = DATASET_CLASSES_NAMES[dataset_name]
-
-    simulatability_metric = SIMULATABILITY_METRICS[EXPLANATION_FAMILY](classes=classes)
-
-    test_predictions = load_or_compute_predictions(
-        model_name=MODEL_NAME,
-        inputs=test_inputs,
-        path=save_root / "test_predictions.pt",
-        device=DEVICE,
-        batch_size=BATCH_SIZE,
-    )
-
+    # Load or compute local elements (seed → sample selection).
     local_elements_by_seed = load_or_compute_local_elements(
         save_root=save_root,
         simulatability_metric=simulatability_metric,
         inputs=test_inputs,
         labels=test_labels,
         predictions=test_predictions,
-        seeds=SEEDS,
-        classes_subset=CLASSES_SUBSET,
-        nb_samples=NB_SAMPLES,
+        seeds=seeds,
+        classes_subset=classes_subset,
+        nb_samples=args.nb_samples,
     )
 
-    if EXPLANATION_FAMILY == "concepts":
+    # Prepare explanation-specific resources.
+    concept_resources = None
+    rationale_by_seed = None
+    contrastive_by_seed = None
+
+    if explanation_family == "concepts":
+        method = METHODS[args.method]
+        interpretation = INTERPRETATIONS[args.interpretation]
         concept_resources = prepare_concept_explanation_resources(
             dataset_name=dataset_name,
-            model_name=MODEL_NAME,
+            model_name=model_name,
             split_point=split_point,
             save_root=save_root,
             train_inputs=train_inputs,
             validation_inputs=validation_inputs,
             classes=classes,
-            device=DEVICE,
-            batch_size=BATCH_SIZE,
-            **PARAMETERS["concepts"],
+            method=method,
+            nb_concepts_ratio=args.nb_concepts_ratio,
+            activations_difference=args.activations_difference,
+            interpretation=interpretation,
+            llm_model=args.llm_model if args.interpretation == "llm" else None,
+            device=args.device,
+            batch_size=args.batch_size,
         )
     else:
-        # Only generate rationales for test samples selected by at least one seed.
+        # Rationale path: generate rationales for all samples used by any seed.
         seed_indices = {
-            seed: list(local_elements_by_seed[seed]["indices"])  # type: ignore[arg-type]
-            for seed in SEEDS
+            seed: list(local_elements_by_seed[seed]["indices"])
+            for seed in seeds
         }
         required_test_indices = sorted(
             {index for indices in seed_indices.values() for index in indices}
         )
         rationales = load_or_generate_rationales(
+            model_name=args.method,
             dataset_name=dataset_name,
             inputs=[test_inputs[index] for index in required_test_indices],
             labels=test_labels[required_test_indices],
             predictions=test_predictions[required_test_indices],
             sample_ids=required_test_indices,
             save_root=save_root,
-            device=DEVICE,
-            **PARAMETERS["rationales"],
+            device=args.device,
+            batch_size=args.rationale_batch_size,
+            max_new_tokens=args.max_new_tokens,
         )
         rationale_by_seed, contrastive_by_seed = group_rationales_by_seed(
             rationales=rationales,
             seed_indices=seed_indices,
         )
 
+    # Generate prompts for all seeds × prompt types × anonymization variants.
+    new_prompts = 0
+    dataset_abbrev = ABBREVIATIONS["datasets"][dataset_name]
+    model_abbrev = ABBREVIATIONS["models"][model_name]
+
     with tqdm(
-        total=len(SEEDS) * len(prompt_types) * 2,  # anonymized vs non-anonymized
+        total=len(seeds) * len(prompt_types) * 2,
+        desc=f"  subset {classes_subset}",
+        leave=False,
     ) as pbar:
-        for seed in SEEDS:
+        for seed in seeds:
             local_elements = local_elements_by_seed[seed]
             nb_learning_samples = local_elements["nb_learning_samples"]
             local_inputs = local_elements["texts"]
             local_labels = torch.tensor(local_elements["labels"])
             local_predictions = torch.tensor(local_elements["predictions"])
 
-            if EXPLANATION_FAMILY == "concepts":
+            if explanation_family == "concepts":
                 local_explanation = compute_local_concept_explanation(
-                    global_explanation=concept_resources,  # type: ignore[arg-type]
-                    local_inputs=local_inputs,  # type: ignore[arg-type]
-                    nb_learning_samples=nb_learning_samples,  # type: ignore[arg-type]
+                    global_explanation=concept_resources,
+                    local_inputs=local_inputs,
+                    nb_learning_samples=nb_learning_samples,
                 )
             else:
-                local_rationales = rationale_by_seed[seed]  # type: ignore[arg-type]
-                local_contrastives = contrastive_by_seed[seed]  # type: ignore[arg-type]
+                local_rationales = rationale_by_seed[seed]
+                local_contrastives = contrastive_by_seed[seed]
 
             for prompt_type, anonym in itertools.product(prompt_types, [True, False]):
-                prompt_type_name = prompt_type.name.split("_")[0]  # type: ignore[union-attr]
+                prompt_type_name = prompt_type.name.split("_")[0]
                 pbar.update(1)
-                is_baseline = "baseline" in prompt_type.name  # type: ignore[union-attr]
-                setting = prompt_type.value._replace(anonymize_classes=anonym)  # type: ignore[arg-type]
+                is_baseline = "baseline" in prompt_type.name
+                setting = prompt_type.value._replace(anonymize_classes=anonym)
 
-                # set key components
-                # concept-based
-                if EXPLANATION_FAMILY == "concepts":
+                # Build experiment key components.
+                if explanation_family == "concepts":
                     method_name = (
-                        concept_resources.method_name if not is_baseline else "baseline"  # type: ignore[arg-type]
+                        concept_resources.method_name if not is_baseline else "baseline"
                     )
-                    nb_concepts = concept_resources.nb_concepts  # type: ignore[arg-type]
-                    interpretation_name = concept_resources.interpretation_name  # type: ignore[arg-type]
+                    nb_concepts = concept_resources.nb_concepts
+                    interpretation_name = concept_resources.interpretation_name
                     construct_prompt_kwargs = {
-                        "concepts_interpretation": concept_resources.concepts_interpretation,  # type: ignore[arg-type]
-                        "global_importances": concept_resources.global_importances,  # type: ignore[arg-type]
-                        "local_importances": local_explanation.local_importances,  # type: ignore[arg-type]
+                        "concepts_interpretation": concept_resources.concepts_interpretation,
+                        "global_importances": concept_resources.global_importances,
+                        "local_importances": local_explanation.local_importances,
                         "contrastive_pairs": list(
-                            itertools.permutations(CLASSES_SUBSET, 2)
+                            itertools.permutations(classes_subset, 2)
                         ),
                     }
-                # rationale
                 else:
-                    method_name = (
-                        PARAMETERS["rationales"]["model_name"]
-                        if not is_baseline
-                        else "baseline"
-                    )
+                    method_name = args.method if not is_baseline else "baseline"
                     nb_concepts = None
                     interpretation_name = None
                     construct_prompt_kwargs = {
-                        "rationales": local_rationales,  # type: ignore[arg-type]
-                        "contrastives": local_contrastives,  # type: ignore[arg-type]
+                        "rationales": local_rationales,
+                        "contrastives": local_contrastives,
                     }
 
                 str_key = str(
                     (
-                        ABBREVIATIONS["datasets"][dataset_name],  # 0
-                        ABBREVIATIONS["models"][MODEL_NAME],  # 1
-                        str(CLASSES_SUBSET),  # 2
-                        seed,  # 3
-                        method_name,  # 4
-                        nb_concepts,  # 5
-                        interpretation_name,  # 6
+                        dataset_abbrev,          # 0
+                        model_abbrev,            # 1
+                        str(classes_subset),     # 2
+                        seed,                    # 3
+                        method_name,             # 4
+                        nb_concepts,             # 5
+                        interpretation_name,     # 6
                         prompt_type_name if not anonym else "A" + prompt_type_name,  # 7
-                        SPECIFICATION,  # 8
+                        specification,           # 8
                     )
                 )
                 if str_key in existing_keys:
@@ -269,14 +375,14 @@ if __name__ == "__main__":
                 system_prompt, user_prompts, expected_answers = (
                     simulatability_metric.construct_prompt(
                         setting=setting,
-                        interesting_samples=local_inputs,  # type: ignore[arg-type]
+                        interesting_samples=local_inputs,
                         corresponding_predictions=local_predictions,
                         corresponding_labels=local_labels,
-                        nb_learning_samples=nb_learning_samples,  # type: ignore[arg-type]
-                        **construct_prompt_kwargs,  # type: ignore[arg-type]
+                        nb_learning_samples=nb_learning_samples,
+                        **construct_prompt_kwargs,
                     )
                 )
-                with open(OUTPUT_PATH, "a") as handle:
+                with open(output_path, "a") as handle:
                     json.dump(
                         {
                             "key": str_key,
@@ -287,3 +393,86 @@ if __name__ == "__main__":
                         handle,
                     )
                     handle.write("\n")
+                existing_keys.add(str_key)
+                new_prompts += 1
+
+    return new_prompts
+
+
+def main() -> None:
+    args = parse_args()
+    seeds = parse_seeds(args.seeds)
+
+    # Resolve dataset abbreviation → full names.
+    dataset_name = _ABBREV_TO_DATASET[args.dataset]
+    model_name = _DATASET_TO_MODEL[dataset_name]
+    split_point = MODEL_SPLIT_POINTS[model_name]
+    save_root = get_save_root(model_name, split_point)
+    save_root.mkdir(parents=True, exist_ok=True)
+
+    # Determine output path.
+    output_path = get_output_path(args.dataset, args.explanation_family)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing keys for skip-already-done.
+    if output_path.exists():
+        existing_keys = {
+            prompt_group["key"] for prompt_group in iter_jsonl(output_path)
+        }
+    else:
+        existing_keys = set()
+
+    # Load dataset once (shared across all class subsets).
+    print(f"Dataset:            {dataset_name} ({args.dataset})")
+    print(f"Model:              {model_name}")
+    print(f"Explanation family: {args.explanation_family}")
+    print(f"Method:             {args.method}")
+    print(f"Seeds:              {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
+    print(f"Output:             {output_path}")
+    print()
+
+    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
+        dataset_name
+    )
+    classes = DATASET_CLASSES_NAMES[dataset_name]
+
+    # Compute predictions once.
+    test_predictions = load_or_compute_predictions(
+        model_name=model_name,
+        inputs=test_inputs,
+        path=save_root / "test_predictions.pt",
+        device=args.device,
+        batch_size=args.batch_size,
+    )
+
+    # Iterate over all canonical class subsets for this dataset.
+    all_subsets = DATASET_CLASSES_SUBSETS[dataset_name]
+    total_new = 0
+
+    for classes_subset in all_subsets:
+        print(f"Processing classes subset: {classes_subset}")
+        n = generate_prompts_for_subset(
+            args=args,
+            classes_subset=classes_subset,
+            dataset_name=dataset_name,
+            model_name=model_name,
+            split_point=split_point,
+            save_root=save_root,
+            train_inputs=train_inputs,
+            validation_inputs=validation_inputs,
+            test_inputs=test_inputs,
+            test_labels=test_labels,
+            test_predictions=test_predictions,
+            classes=classes,
+            seeds=seeds,
+            output_path=output_path,
+            existing_keys=existing_keys,
+        )
+        total_new += n
+        print(f"  → {n} new prompt groups written.")
+
+    print(f"\nDone. {total_new} total new prompt groups appended to {output_path}.")
+
+
+if __name__ == "__main__":
+    main()

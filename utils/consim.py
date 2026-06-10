@@ -29,7 +29,7 @@ from typing import NamedTuple
 
 import torch
 
-from interpreto.concepts.metrics.simulatability.base import AutomatedSimulatability
+from utils.simulatability import AutomatedSimulatability
 
 
 class PromptSetting(NamedTuple):

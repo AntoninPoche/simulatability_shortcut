@@ -18,37 +18,35 @@ Forked from [contrastive_concepts](https://github.com/AntoninPoche/contrastive_c
 
 ```
 scripts/
-  build_concepts.py     # Build and cache concept models/interpretations/importances (CLI)
-  make_prompts.py       # Generate ConSim prompt JSONL (top-of-file constants)
-  local_llm_scoring.py  # Score prompts with a local HF LLM
+  build_concepts.py           # Build and cache concept models/interpretations/importances (CLI)
+  make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse)
+  make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
+  local_llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
 
-sources/                # Shared library modules (see Import Caveat below)
-  data.py               # Dataset/model registries, split loading, caching helpers
-  concepts.py           # Concept model loading/fitting, interpretations, importances
-  consim.py             # ConSim prompt builder (mirrors/overrides interpreto's ConSim)
-  old_consim.py         # Legacy ConSim implementation (for comparison)
-  simulatability.py     # Base AutomatedSimulatability class (mirrors interpreto)
-  rationales.py         # Rationale generation from local LLMs (Qwen)
+utils/                        # Shared library package
+  __init__.py
+  data.py                     # Dataset/model registries, split loading, caching helpers
+  concepts.py                 # Concept model loading/fitting, interpretations, importances
+  consim.py                   # New ConSim prompt builder (one prompt per eval sample)
+  old_consim.py               # Old ConSim prompt builder (all eval samples at once)
+  simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
+  rationales.py               # Rationale generation from local LLMs (Qwen)
   rationales_simulatability.py  # Rationale-based prompt construction
 
-sequence.sh             # Cartesian-product script runner (see Commands below)
+sequence.sh                   # Cartesian-product script runner (see Commands below)
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
-data/                   # Gitignored artifacts: activations, predictions, prompts, scores
+data/                         # Gitignored artifacts: activations, predictions, prompts, scores
 ```
 
-## Import Caveat (important)
+## Import Architecture
 
-Scripts import from `utils.*` (e.g., `from utils.data import ...`) but the physical directory is `sources/`. There is no `utils/` directory or package. **Scripts cannot run as-is** without either:
-- Renaming `sources/` → `utils/`, or
-- Creating a `utils/` symlink to `sources/`
-
-This mismatch exists because the repo was forked from `contrastive_concepts` where the directory was called `utils/`.
-
-Several files in `sources/` (`consim.py`, `old_consim.py`, `simulatability.py`) carry the interpreto MIT license and mirror/override classes from the `interpreto` library.
+- **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `rationales_simulatability.py` — these are the canonical implementations, not imported from interpreto.
+- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `ModelWithSplitPoints`, `LLMLabels`, `TopKInputs`. These are the heavy ML components we don't need to modify.
+- All scripts add the repo root to `sys.path` so `from utils.* import ...` works when running `python scripts/foo.py`.
 
 ## Commands
 
-**Install dependencies** (venv exists but packages not yet installed):
+**Install dependencies** (venv exists but packages may need installing):
 ```bash
 .venv/bin/pip install -r requirements.txt
 ```
@@ -59,23 +57,27 @@ python scripts/build_concepts.py --dataset GE --method seminmf --interpretation 
 python scripts/build_concepts.py --dataset BIOS --method ica --nb-concepts-ratio 2
 ```
 
-Valid `--dataset` values: `GE`, `HE`, `BIOS`, `E`.  
-Valid `--method` values: `seminmf`, `ica`, `kmeans`, `pca`, `svd`.  
-Valid `--interpretation` values: `topk`, `llm`.
+**Generate prompts — new ConSim** (iterates over all class subsets for the dataset):
+```bash
+python scripts/make_prompts.py --dataset GE --explanation-family concepts --method seminmf
+python scripts/make_prompts.py --dataset BIOS --explanation-family rationales --method Qwen/Qwen3.5-9B
+```
 
-**Run combinations with sequence.sh** (cartesian product of comma-separated args):
+**Generate prompts — old ConSim** (for new-vs-old comparison, uses same cached samples):
+```bash
+python scripts/make_prompts_old_consim.py --dataset GE --method seminmf
+```
+
+**Score prompts with local LLM**:
+```bash
+python scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_concepts.jsonl
+```
+
+**Run full grids with sequence.sh** (cartesian product of comma-separated args):
 ```bash
 ./sequence.sh scripts/build_concepts.py GE,HE,BIOS --method ica,kmeans --interpretation topk
-```
-
-**Generate prompts** (configure via top-of-file constants, then run):
-```bash
-python scripts/make_prompts.py
-```
-
-**Score prompts with local LLM** (configure MODEL_NAME at top of file):
-```bash
-python scripts/local_llm_scoring.py
+./sequence.sh scripts/make_prompts.py GE,HE,BIOS --explanation-family concepts --method seminmf,ica,kmeans
+./sequence.sh scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
 **Compile paper** (from LaTeX directory):
@@ -83,25 +85,40 @@ python scripts/local_llm_scoring.py
 pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 ```
 
+## CLI Arguments Reference
+
+### `build_concepts.py`
+`--dataset` (GE/HE/BIOS/E), `--method` (seminmf/ica/kmeans/pca/svd), `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--activations-difference`, `--llm-model`, `--device`, `--batch-size`
+
+### `make_prompts.py`
+`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--llm-model`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+
+### `make_prompts_old_consim.py`
+`--dataset`, `--method`, `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--llm-model`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
+
+### `local_llm_scoring.py`
+`--judge-model`, `--prompt-file`, `--thinking`/`--no-thinking`, `--max-new-tokens`, `--generation-batch-size`, `--device`
+
 ## Key Dependencies
 
 - `interpreto` @ `0.5.0dev1` from `git+https://github.com/FOR-sight-ai/interpreto.git@0.5.0dev1`
 - `torch` 2.11.0+cu126
-- `transformers` (used by scripts but not pinned in requirements.txt — comes via interpreto)
+- `transformers` (comes via interpreto)
 - `datasets`, `pandas`, `ipykernel`
 - Python 3.12
 
 ## Architecture Notes
 
-- Two explanation families: **concepts** (SemiNMF/ICA/KMeans/PCA/SVD + TopKInputs/LLMLabels interpretations) and **rationales** (Qwen LLM generated).
-- `scripts/make_prompts.py` and `scripts/local_llm_scoring.py` use **top-of-file constants** (MODEL_NAME, CLASSES_SUBSET, EXPLANATION_FAMILY, etc.) instead of CLI args. Edit the file to change configuration.
-- `scripts/build_concepts.py` uses proper CLI argparse.
-- Prompt JSONL is the bridge between prompt generation and scoring: `data/consim_prompts.jsonl`.
-- Scores are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
-- Artifacts are cached aggressively under `data/` to avoid GPU recomputation.
-- Experiment identity is encoded in string keys (tuples of dataset, model, classes, seed, method, etc.).
+- **Two explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD + TopKInputs/LLMLabels) and rationales (Qwen LLM generated).
+- **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
+- **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
+- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring.
+- **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
+- **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
+- **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.
+- **All class subsets** for a dataset are processed in a single script invocation (defined in `DATASET_CLASSES_SUBSETS` in `utils/data.py`).
 
-## Registries in `sources/data.py`
+## Registries in `utils/data.py`
 
 When adding a new model/dataset, update:
 - `MODELS_DATASETS`: model name → dataset name
@@ -109,6 +126,7 @@ When adding a new model/dataset, update:
 - `DATASET_CLASSES_NAMES`: ordered class name list per dataset
 - `DATASET_LABEL_COLUMNS`: label column per dataset
 - `MODEL_SPLIT_POINTS`: layer index for concept extraction
+- `DATASET_CLASSES_SUBSETS`: canonical class subsets for experiments
 
 ## Style
 

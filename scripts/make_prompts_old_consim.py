@@ -1,0 +1,364 @@
+"""Generate prompts using the OLD ConSim implementation (all-at-once evaluation).
+
+This script reuses the same cached local_elements as make_prompts.py, ensuring
+that comparisons between old and new ConSim are done on identical samples and seeds.
+
+The key difference: old ConSim puts all evaluation samples into a single user prompt
+and expects the LLM to return all predictions at once. New ConSim asks one sample at
+a time. This script outputs JSONL with the same schema, but user_prompts has length 1
+and expected_answers has the full list of expected predictions.
+
+Usage examples::
+
+    python scripts/make_prompts_old_consim.py --dataset GE --method seminmf
+    python scripts/make_prompts_old_consim.py --dataset BIOS --method ica --interpretation topk
+
+Output: ``data/prompts/{dataset_abbrev}_old_consim.jsonl``
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from tqdm import tqdm
+import torch
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from interpreto.concepts import (
+    ICAConcepts,
+    KMeansConcepts,
+    PCAConcepts,
+    SemiNMFConcepts,
+    SVDConcepts,
+)
+from interpreto.concepts.interpretations import LLMLabels, TopKInputs
+
+from utils.concepts import (
+    prepare_concept_explanation_resources,
+)
+from utils.consim import ConSim  # new ConSim, only used for sample selection
+from utils.old_consim import ConSim as OldConSim, PromptTypes as OldPromptTypes
+from utils.data import (
+    ABBREVIATIONS,
+    DATASET_CLASSES_NAMES,
+    DATASET_CLASSES_SUBSETS,
+    MODELS_DATASETS,
+    MODEL_SPLIT_POINTS,
+    get_save_root,
+    iter_jsonl,
+    load_dataset_splits,
+    load_or_compute_local_elements,
+    load_or_compute_predictions,
+)
+
+# ---------------------------------------------------------------------------
+_ABBREV_TO_DATASET: dict[str, str] = {
+    v: k for k, v in ABBREVIATIONS["datasets"].items()
+}
+_DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
+
+METHODS = {
+    "seminmf": SemiNMFConcepts,
+    "ica": ICAConcepts,
+    "kmeans": KMeansConcepts,
+    "pca": PCAConcepts,
+    "svd": SVDConcepts,
+}
+INTERPRETATIONS = {
+    "llm": LLMLabels,
+    "topk": TopKInputs,
+}
+
+# Old ConSim prompt types (subset relevant for comparison).
+OLD_PROMPT_TYPES = {
+    OldPromptTypes.L1_baseline_without_lp,
+    OldPromptTypes.E1_global_concepts_without_lp,
+    OldPromptTypes.L2_baseline_with_lp,
+    OldPromptTypes.E2_global_concepts_with_lp,
+    OldPromptTypes.E3_global_and_local_concepts_with_lp,
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate old ConSim (all-at-once) prompts for comparison.",
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=sorted(_ABBREV_TO_DATASET.keys()),
+        required=True,
+        help="Dataset abbreviation (e.g. GE, HE, BIOS, E).",
+    )
+    parser.add_argument(
+        "--method",
+        choices=sorted(METHODS.keys()),
+        required=True,
+        help="Concept extraction method.",
+    )
+    parser.add_argument(
+        "--nb-concepts-ratio",
+        type=float,
+        default=3,
+        help="Number of concepts = nb_classes * ratio (default: 3).",
+    )
+    parser.add_argument(
+        "--activations-difference",
+        action="store_true",
+        help="Use pair-wise activation differences for concept fitting.",
+    )
+    parser.add_argument(
+        "--interpretation",
+        choices=sorted(INTERPRETATIONS.keys()),
+        default="topk",
+        help="Interpretation method (default: topk).",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="gpt-4.1-nano",
+        help="LLM model for LLMLabels interpretation (default: gpt-4.1-nano).",
+    )
+    parser.add_argument(
+        "--seeds",
+        default="0-49",
+        help="Seed range (e.g. '0-49') or comma-separated list.",
+    )
+    parser.add_argument(
+        "--nb-samples",
+        type=int,
+        default=20,
+        help="Number of samples per seed (default: 20).",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device for computation.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size for model inference (default: 64).",
+    )
+    return parser.parse_args()
+
+
+def parse_seeds(seeds_str: str) -> list[int]:
+    if "-" in seeds_str and "," not in seeds_str:
+        start, end = seeds_str.split("-")
+        return list(range(int(start), int(end) + 1))
+    return [int(s) for s in seeds_str.split(",")]
+
+
+def build_old_consim_global_importances(
+    global_importances: torch.Tensor,
+    classes: list[str],
+    classes_subset: list[int],
+) -> dict[str, dict[int, float]]:
+    """
+    Convert the (nb_classes, nb_concepts) tensor into old ConSim's expected format:
+    {class_name: {concept_id: importance_float, ...}, ...}
+    Only includes classes in the subset.
+    """
+    result: dict[str, dict[int, float]] = {}
+    for class_id in classes_subset:
+        class_name = classes[class_id]
+        result[class_name] = {
+            cid: global_importances[class_id, cid].item()
+            for cid in range(global_importances.shape[1])
+        }
+    return result
+
+
+def main() -> None:
+    args = parse_args()
+    seeds = parse_seeds(args.seeds)
+
+    # Resolve names.
+    dataset_name = _ABBREV_TO_DATASET[args.dataset]
+    model_name = _DATASET_TO_MODEL[dataset_name]
+    split_point = MODEL_SPLIT_POINTS[model_name]
+    save_root = get_save_root(model_name, split_point)
+    save_root.mkdir(parents=True, exist_ok=True)
+
+    # Output path.
+    output_path = Path(f"data/prompts/{args.dataset}_old_consim.jsonl")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if output_path.exists():
+        existing_keys = {pg["key"] for pg in iter_jsonl(output_path)}
+    else:
+        existing_keys = set()
+
+    print(f"Dataset:         {dataset_name} ({args.dataset})")
+    print(f"Model:           {model_name}")
+    print(f"Method:          {args.method}")
+    print(f"Interpretation:  {args.interpretation}")
+    print(f"Seeds:           {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
+    print(f"Output:          {output_path}")
+    print()
+
+    # Load dataset.
+    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
+        dataset_name
+    )
+    classes = DATASET_CLASSES_NAMES[dataset_name]
+
+    # We use the NEW ConSim's select_examples to ensure identical samples.
+    simulatability_metric = ConSim(classes=classes)
+
+    test_predictions = load_or_compute_predictions(
+        model_name=model_name,
+        inputs=test_inputs,
+        path=save_root / "test_predictions.pt",
+        device=args.device,
+        batch_size=args.batch_size,
+    )
+
+    # Build concept resources.
+    method = METHODS[args.method]
+    interpretation = INTERPRETATIONS[args.interpretation]
+    concept_resources = prepare_concept_explanation_resources(
+        dataset_name=dataset_name,
+        model_name=model_name,
+        split_point=split_point,
+        save_root=save_root,
+        train_inputs=train_inputs,
+        validation_inputs=validation_inputs,
+        classes=classes,
+        method=method,
+        nb_concepts_ratio=args.nb_concepts_ratio,
+        activations_difference=args.activations_difference,
+        interpretation=interpretation,
+        llm_model=args.llm_model if args.interpretation == "llm" else None,
+        device=args.device,
+        batch_size=args.batch_size,
+    )
+
+    # Iterate over all class subsets.
+    all_subsets = DATASET_CLASSES_SUBSETS[dataset_name]
+    total_new = 0
+    dataset_abbrev = ABBREVIATIONS["datasets"][dataset_name]
+    model_abbrev = ABBREVIATIONS["models"][model_name]
+
+    for classes_subset in all_subsets:
+        print(f"Processing classes subset: {classes_subset}")
+
+        local_elements_by_seed = load_or_compute_local_elements(
+            save_root=save_root,
+            simulatability_metric=simulatability_metric,
+            inputs=test_inputs,
+            labels=test_labels,
+            predictions=test_predictions,
+            seeds=seeds,
+            classes_subset=classes_subset,
+            nb_samples=args.nb_samples,
+        )
+
+        # Convert global importances to old format.
+        old_global_importances = build_old_consim_global_importances(
+            concept_resources.global_importances,
+            classes,
+            classes_subset,
+        )
+
+        # Compute local importances for all samples used by any seed.
+        # Old ConSim expects a flat tensor (nb_lp_samples, nb_concepts) per seed.
+        # We'll compute them per-seed in the loop below.
+
+        with tqdm(
+            total=len(seeds) * len(OLD_PROMPT_TYPES) * 2,
+            desc=f"  subset {classes_subset}",
+            leave=False,
+        ) as pbar:
+            for seed in seeds:
+                local_elements = local_elements_by_seed[seed]
+                nb_learning_samples = local_elements["nb_learning_samples"]
+                local_inputs = local_elements["texts"]
+                local_labels = torch.tensor(local_elements["labels"])
+                local_predictions = torch.tensor(local_elements["predictions"])
+
+                # Compute local importances for learning phase samples.
+                # Old ConSim expects shape (nb_lp_samples, nb_concepts) — the importance
+                # of each concept for the PREDICTED class of each sample.
+                lp_local_importances = (
+                    concept_resources.concept_explainer.concept_output_gradient(
+                        inputs=local_inputs[:nb_learning_samples],
+                        activation_granularity=(
+                            concept_resources.concept_explainer._splitter.activation_granularities.CLS_TOKEN
+                        ),
+                        concepts_x_gradients=True,
+                    )
+                )
+                # Each element is (1, nb_classes, nb_concepts), we need per-predicted-class.
+                old_local_importances = torch.stack([
+                    lp_local_importances[i].squeeze(0)[int(local_predictions[i].item())]
+                    for i in range(nb_learning_samples)
+                ])
+
+                for prompt_type in OLD_PROMPT_TYPES:
+                    for anonym in [True, False]:
+                        pbar.update(1)
+                        prompt_type_name = prompt_type.name.split("_")[0]
+                        is_baseline = "baseline" in prompt_type.name
+                        method_name = (
+                            concept_resources.method_name if not is_baseline else "baseline"
+                        )
+
+                        str_key = str(
+                            (
+                                dataset_abbrev,
+                                model_abbrev,
+                                str(classes_subset),
+                                seed,
+                                method_name,
+                                concept_resources.nb_concepts,
+                                concept_resources.interpretation_name,
+                                prompt_type_name if not anonym else "A" + prompt_type_name,
+                                "old_consim",
+                            )
+                        )
+                        if str_key in existing_keys:
+                            continue
+
+                        # Use old ConSim's _generate_prompt (static method).
+                        prompt, literal_model_predictions = OldConSim._generate_prompt(
+                            sentences=local_inputs,
+                            predictions=local_predictions,
+                            classes=[classes[c] for c in classes_subset],
+                            concepts_interpretation=concept_resources.concepts_interpretation,
+                            global_importances=old_global_importances if not is_baseline else None,
+                            local_importances=old_local_importances if not is_baseline else None,
+                            prompt_type=prompt_type,
+                            anonymize_classes=anonym,
+                        )
+
+                        # Extract system_prompt and user_prompt from Role-tagged list.
+                        system_prompt = prompt[0][1]  # (Role.SYSTEM, text)
+                        user_prompt = prompt[1][1]    # (Role.USER, text)
+
+                        with open(output_path, "a") as handle:
+                            json.dump(
+                                {
+                                    "key": str_key,
+                                    "system_prompt": system_prompt,
+                                    "user_prompts": [user_prompt],
+                                    "expected_answers": literal_model_predictions,
+                                },
+                                handle,
+                            )
+                            handle.write("\n")
+                        existing_keys.add(str_key)
+                        total_new += 1
+
+        print(f"  → {total_new} new prompt groups written.")
+
+    print(f"\nDone. {total_new} total new prompt groups appended to {output_path}.")
+
+
+if __name__ == "__main__":
+    main()

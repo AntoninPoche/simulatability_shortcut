@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import torch
     from interpreto import ModelWithSplitPoints
-    from interpreto.concepts.metrics.simulatability.base import AutomatedSimulatability
+    from utils.simulatability import AutomatedSimulatability
 
 MODELS_DATASETS = {
     "SamLowe/roberta-base-go_emotions": "google-research-datasets/go_emotions",
@@ -115,6 +115,30 @@ MODEL_SPLIT_POINTS = {
     "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": 11,
 }
 
+# Canonical class subsets for each dataset.
+# Each dataset has multiple subsets used in experiments.
+# All subsets for a given dataset are run together.
+DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
+    "google-research-datasets/go_emotions": [
+        [2, 3, 27],    # anger, annoyance, neutral
+        [2, 3, 9, 10], # anger, annoyance, disappointment, disapproval
+        [6, 7],        # confusion, curiosity
+        [0, 4, 5],     # admiration, approval, caring
+    ],
+    "dair-ai/emotion": [
+        [0, 1, 2, 3, 4, 5],  # all classes
+    ],
+    "Hate-speech-CNERG/hatexplain": [
+        [0, 1, 2],  # all classes
+    ],
+    "LabHC/bias_in_bios": [
+        [0, 11, 25],   # surgeon, physician, dentist
+        [3, 6, 26],    # professor, teacher, psychologist
+        [3, 5, 13],    # professor, software_developer, architect
+        [2, 12, 21],   # photographer, journalist, filmmaker
+    ],
+}
+
 
 def iter_jsonl(path: Path):
     with open(path) as handle:
@@ -131,12 +155,13 @@ def get_save_root(model_name: str, split_point: str | int) -> Path:
 def get_local_elements_path(
     save_root: Path,
     classes_subset: list[int] | None = None,
+    nb_samples: int = 20,
 ) -> Path:
     if classes_subset is None:
         suffix = "all_classes"
     else:
         suffix = "classes_" + "-".join(str(class_id) for class_id in classes_subset)
-    return save_root / f"local_elements_{suffix}.json"
+    return save_root / f"local_elements_{suffix}_n{nb_samples}.json"
 
 
 def load_dataset_splits(dataset: str):
@@ -261,11 +286,11 @@ def load_or_compute_local_elements(
     labels: torch.Tensor,
     predictions: torch.Tensor,
     seeds: list[int],
-    nb_samples: int = 40,
+    nb_samples: int = 20,
     classes_subset: list[int] | None = None,
 ) -> dict[int, dict[str, int | list[int] | list[str]]]:
     cached_payload: dict[str, dict[str, int | list[int] | list[str]]] = {}
-    path = get_local_elements_path(save_root, classes_subset)
+    path = get_local_elements_path(save_root, classes_subset, nb_samples)
     if path.exists():
         with open(path) as f:
             cached_payload = json.load(f)

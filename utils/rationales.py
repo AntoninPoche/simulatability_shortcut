@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import json
 import os
-import sys
 from pathlib import Path
 from tqdm import tqdm
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-sys.path.append(str(Path(__file__).parent.parent))
 from utils.data import DATASET_CLASSES_NAMES, iter_jsonl
 
 LABEL_NATURE_BY_DATASET = {
