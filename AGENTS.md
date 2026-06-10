@@ -31,7 +31,7 @@ utils/                        # Shared library package
   old_consim.py               # Old ConSim prompt builder (all eval samples at once)
   simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
   rationales.py               # Rationale generation from local LLMs (Qwen)
-  rationales_simulatability.py  # Rationale-based prompt construction
+  ratsim.py                   # Rationale-based prompt construction
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
@@ -40,8 +40,9 @@ data/                         # Gitignored artifacts: activations, predictions, 
 
 ## Import Architecture
 
-- **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `rationales_simulatability.py` — these are the canonical implementations, not imported from interpreto.
-- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, `LLMLabels`, `TopKInputs`. These are the heavy ML components we don't need to modify.
+- **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `ratsim.py` — these are the canonical implementations, not imported from interpreto.
+- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, `LLMLabels`, `TopKInputs`. Used only by `build_concepts.py` and `utils/concepts.py` for the heavy ML components.
+- **Prompt scripts (`make_prompts.py`, `make_prompts_old_consim.py`) do NOT import from interpreto** — they load pre-built artifacts from disk.
 - All scripts add the repo root to `sys.path` so `from utils.* import ...` works when running `python scripts/foo.py`.
 
 ## Commands
@@ -91,10 +92,10 @@ pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 `--dataset` (GE/HE/BIOS/E), `--method` (seminmf/ica/kmeans/pca/svd), `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--activations-difference`, `--llm-model`, `--device`, `--batch-size`
 
 ### `make_prompts.py`
-`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--llm-model`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
 
 ### `make_prompts_old_consim.py`
-`--dataset`, `--method`, `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--llm-model`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
+`--dataset`, `--method`, `--nb-concepts-ratio`, `--activations-difference`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
 
 ### `local_llm_scoring.py`
 `--judge-model`, `--prompt-file`, `--thinking`/`--no-thinking`, `--max-new-tokens`, `--generation-batch-size`, `--device`
@@ -111,6 +112,8 @@ pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 
 - **Two explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD + TopKInputs/LLMLabels) and rationales (Qwen LLM generated).
 - **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
+- **Concept creation vs prompt generation are fully decoupled**: `build_concepts.py` creates all concept artifacts (model, interpretations, global importances, ALL local importances for test samples). `make_prompts.py` and `make_prompts_old_consim.py` only load pre-built artifacts from disk — they never import from interpreto or load the task model.
+- **Pre-computed local importances**: `build_concepts.py` caches `all_local_importances.pt` in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
 - **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
@@ -125,7 +128,7 @@ When adding a new model/dataset, update:
 - `ABBREVIATIONS`: short codes for datasets/models
 - `DATASET_CLASSES_NAMES`: ordered class name list per dataset
 - `DATASET_LABEL_COLUMNS`: label column per dataset
-- `MODEL_SPLIT_POINTS`: layer index for concept extraction
+- `MODEL_SPLIT_POINTS`: split point for concept extraction (use `"auto"` for new models — `SplitterForClassification` auto-detects the classification head)
 - `DATASET_CLASSES_SUBSETS`: canonical class subsets for experiments
 
 ## Style

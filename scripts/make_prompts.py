@@ -28,24 +28,16 @@ if __package__ in {None, ""}:
     # Allow `python scripts/make_prompts.py` to resolve the repo-local `utils` package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from interpreto.concepts import (
-    ICAConcepts,
-    KMeansConcepts,
-    PCAConcepts,
-    SemiNMFConcepts,
-    SVDConcepts,
-)
-from interpreto.concepts.interpretations import LLMLabels, TopKInputs
-
 from utils.concepts import (
-    compute_local_concept_explanation,
-    prepare_concept_explanation_resources,
+    load_concept_explanation_resources,
+    load_local_importances,
 )
 from utils.consim import ConSim, PromptTypes
 from utils.data import (
     ABBREVIATIONS,
     DATASET_CLASSES_NAMES,
     DATASET_CLASSES_SUBSETS,
+    LLM_MODELS,
     MODELS_DATASETS,
     MODEL_SPLIT_POINTS,
     get_save_root,
@@ -53,6 +45,7 @@ from utils.data import (
     load_dataset_splits,
     load_or_compute_local_elements,
     load_or_compute_predictions,
+    resolve_llm_model,
 )
 from utils.rationales import (
     load_or_generate_rationales,
@@ -71,19 +64,13 @@ _ABBREV_TO_DATASET: dict[str, str] = {
 }
 _DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
 
-# Concept extraction methods available as CLI choices.
-METHODS = {
-    "seminmf": SemiNMFConcepts,
-    "ica": ICAConcepts,
-    "kmeans": KMeansConcepts,
-    "pca": PCAConcepts,
-    "svd": SVDConcepts,
-}
+# Concept extraction method names (for --method validation and path construction).
+CONCEPT_METHODS = {"seminmf", "ica", "kmeans", "pca", "svd"}
 
-# Interpretation methods for concept labeling.
-INTERPRETATIONS = {
-    "llm": LLMLabels,
-    "topk": TopKInputs,
+# Interpretation method names → interpreto class names (for cache path lookup).
+INTERPRETATION_NAMES = {
+    "llm": "LLMLabels",
+    "topk": "TopKInputs",
 }
 
 # Prompt types for each explanation family.
@@ -122,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         required=True,
-        help="Concept extraction method (seminmf, ica, kmeans, pca, svd) or rationale model name (e.g. Qwen/Qwen3.5-9B).",
+        help=f"Concept extraction method (seminmf, ica, kmeans, pca, svd) or rationale model short name/path. Short names: {', '.join(LLM_MODELS.keys())}.",
     )
     parser.add_argument(
         "--nb-concepts-ratio",
@@ -137,14 +124,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--interpretation",
-        choices=sorted(INTERPRETATIONS.keys()),
+        choices=sorted(INTERPRETATION_NAMES.keys()),
         default="topk",
         help="Interpretation method for concept labeling (default: topk).",
-    )
-    parser.add_argument(
-        "--llm-model",
-        default="gpt-4.1-nano",
-        help="LLM model for LLMLabels interpretation (default: gpt-4.1-nano).",
     )
     # Rationale-specific arguments
     parser.add_argument(
@@ -199,10 +181,7 @@ def generate_prompts_for_subset(
     classes_subset: list[int],
     dataset_name: str,
     model_name: str,
-    split_point: str | int,
     save_root: Path,
-    train_inputs: list[str],
-    validation_inputs: list[str],
     test_inputs: list[str],
     test_labels: torch.Tensor,
     test_predictions: torch.Tensor,
@@ -243,23 +222,15 @@ def generate_prompts_for_subset(
     rationale_by_seed = None
 
     if explanation_family == "concepts":
-        method = METHODS[args.method]
-        interpretation = INTERPRETATIONS[args.interpretation]
-        concept_resources = prepare_concept_explanation_resources(
-            dataset_name=dataset_name,
-            model_name=model_name,
-            split_point=split_point,
+        nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+        interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+        concept_resources = load_concept_explanation_resources(
             save_root=save_root,
-            train_inputs=train_inputs,
-            validation_inputs=validation_inputs,
-            classes=classes,
-            method=method,
-            nb_concepts_ratio=args.nb_concepts_ratio,
+            method_name=args.method,
+            nb_concepts=nb_concepts,
             activations_difference=args.activations_difference,
-            interpretation=interpretation,
-            llm_model=args.llm_model if args.interpretation == "llm" else None,
-            device=args.device,
-            batch_size=args.batch_size,
+            interpretation_name=interpretation_name,
+            classes=classes,
         )
     else:
         # Rationale path: generate rationales for all samples used by any seed.
@@ -302,11 +273,12 @@ def generate_prompts_for_subset(
             local_inputs = local_elements["texts"]
             local_labels = torch.tensor(local_elements["labels"])
             local_predictions = torch.tensor(local_elements["predictions"])
+            local_indices = list(local_elements["indices"])
 
             if explanation_family == "concepts":
-                local_explanation = compute_local_concept_explanation(
-                    global_explanation=concept_resources,
-                    local_inputs=local_inputs,
+                local_explanation = load_local_importances(
+                    concept_dir=concept_resources.concept_dir,
+                    sample_indices=local_indices,
                     nb_learning_samples=nb_learning_samples,
                 )
             else:
@@ -392,6 +364,10 @@ def main() -> None:
     save_root = get_save_root(model_name, split_point)
     save_root.mkdir(parents=True, exist_ok=True)
 
+    # Resolve short LLM model names for rationale generation.
+    if args.explanation_family == "rationales":
+        args.method = resolve_llm_model(args.method)
+
     # Determine output path.
     output_path = Path(f"data/prompts/{args.dataset}_{args.explanation_family}.jsonl")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -404,7 +380,7 @@ def main() -> None:
     else:
         existing_keys = set()
 
-    # Load dataset once (shared across all class subsets).
+    # Load dataset (only test split needed for prompt generation).
     print(f"Dataset:            {dataset_name} ({args.dataset})")
     print(f"Model:              {model_name}")
     print(f"Explanation family: {args.explanation_family}")
@@ -413,7 +389,7 @@ def main() -> None:
     print(f"Output:             {output_path}")
     print()
 
-    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
+    _train_inputs, _validation_inputs, test_inputs, test_labels = load_dataset_splits(
         dataset_name
     )
     classes = DATASET_CLASSES_NAMES[dataset_name]
@@ -438,10 +414,7 @@ def main() -> None:
             classes_subset=classes_subset,
             dataset_name=dataset_name,
             model_name=model_name,
-            split_point=split_point,
             save_root=save_root,
-            train_inputs=train_inputs,
-            validation_inputs=validation_inputs,
             test_inputs=test_inputs,
             test_labels=test_labels,
             test_predictions=test_predictions,

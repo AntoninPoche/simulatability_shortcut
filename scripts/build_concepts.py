@@ -32,14 +32,19 @@ from interpreto.concepts import (
 )
 from interpreto.concepts.interpretations import LLMLabels, TopKInputs
 
-from utils.concepts import prepare_concept_explanation_resources
+from utils.concepts import (
+    compute_and_cache_all_local_importances,
+    prepare_concept_explanation_resources,
+)
 from utils.data import (
     ABBREVIATIONS,
     DATASET_CLASSES_NAMES,
+    LLM_MODELS,
     MODELS_DATASETS,
     MODEL_SPLIT_POINTS,
     get_save_root,
     load_dataset_splits,
+    resolve_llm_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -102,8 +107,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--llm-model",
-        default="gpt-4.1-nano",
-        help="LLM model for LLMLabels interpretation (default: gpt-4.1-nano).",
+        default="llama3.2-3b",
+        help=f"LLM model for LLMLabels interpretation (default: llama3.2-3b). Short names: {', '.join(LLM_MODELS.keys())}.",
     )
     parser.add_argument(
         "--device",
@@ -131,6 +136,7 @@ def main() -> None:
 
     method = METHODS[args.method]
     interpretation = INTERPRETATIONS[args.interpretation]
+    llm_model = resolve_llm_model(args.llm_model) if args.interpretation == "llm" else None
 
     print(f"Dataset:        {dataset_name} ({args.dataset})")
     print(f"Model:          {model_name}")
@@ -160,8 +166,17 @@ def main() -> None:
         nb_concepts_ratio=args.nb_concepts_ratio,
         activations_difference=args.activations_difference,
         interpretation=interpretation,
-        llm_model=args.llm_model if args.interpretation == "llm" else None,
+        llm_model=llm_model,
         device=args.device,
+        batch_size=args.batch_size,
+    )
+
+    # Pre-compute local importances for ALL test samples so that make_prompts.py
+    # can load them without needing the task model or interpreto.
+    compute_and_cache_all_local_importances(
+        concept_explainer=global_explanation.concept_explainer,
+        test_inputs=test_inputs,
+        concept_dir=global_explanation.concept_dir,
         batch_size=args.batch_size,
     )
 

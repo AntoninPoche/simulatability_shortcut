@@ -29,17 +29,9 @@ import torch
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from interpreto.concepts import (
-    ICAConcepts,
-    KMeansConcepts,
-    PCAConcepts,
-    SemiNMFConcepts,
-    SVDConcepts,
-)
-from interpreto.concepts.interpretations import LLMLabels, TopKInputs
-
 from utils.concepts import (
-    prepare_concept_explanation_resources,
+    load_concept_explanation_resources,
+    load_local_importances,
 )
 from utils.consim import ConSim  # new ConSim, only used for sample selection
 from utils.old_consim import ConSim as OldConSim, PromptTypes as OldPromptTypes
@@ -62,16 +54,13 @@ _ABBREV_TO_DATASET: dict[str, str] = {
 }
 _DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
 
-METHODS = {
-    "seminmf": SemiNMFConcepts,
-    "ica": ICAConcepts,
-    "kmeans": KMeansConcepts,
-    "pca": PCAConcepts,
-    "svd": SVDConcepts,
-}
-INTERPRETATIONS = {
-    "llm": LLMLabels,
-    "topk": TopKInputs,
+# Concept extraction method names (for --method validation).
+CONCEPT_METHODS = {"seminmf", "ica", "kmeans", "pca", "svd"}
+
+# Interpretation method names → interpreto class names (for cache path lookup).
+INTERPRETATION_NAMES = {
+    "llm": "LLMLabels",
+    "topk": "TopKInputs",
 }
 
 # Old ConSim prompt types (subset relevant for comparison).
@@ -96,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--method",
-        choices=sorted(METHODS.keys()),
+        choices=sorted(CONCEPT_METHODS),
         required=True,
         help="Concept extraction method.",
     )
@@ -113,14 +102,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--interpretation",
-        choices=sorted(INTERPRETATIONS.keys()),
+        choices=sorted(INTERPRETATION_NAMES.keys()),
         default="topk",
         help="Interpretation method (default: topk).",
-    )
-    parser.add_argument(
-        "--llm-model",
-        default="gpt-4.1-nano",
-        help="LLM model for LLMLabels interpretation (default: gpt-4.1-nano).",
     )
     parser.add_argument(
         "--seeds",
@@ -202,8 +186,8 @@ def main() -> None:
     print(f"Output:          {output_path}")
     print()
 
-    # Load dataset.
-    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
+    # Load dataset (only test split needed).
+    _train_inputs, _validation_inputs, test_inputs, test_labels = load_dataset_splits(
         dataset_name
     )
     classes = DATASET_CLASSES_NAMES[dataset_name]
@@ -219,24 +203,16 @@ def main() -> None:
         batch_size=args.batch_size,
     )
 
-    # Build concept resources.
-    method = METHODS[args.method]
-    interpretation = INTERPRETATIONS[args.interpretation]
-    concept_resources = prepare_concept_explanation_resources(
-        dataset_name=dataset_name,
-        model_name=model_name,
-        split_point=split_point,
+    # Load pre-built concept resources (load-only, no interpreto needed).
+    nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+    interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+    concept_resources = load_concept_explanation_resources(
         save_root=save_root,
-        train_inputs=train_inputs,
-        validation_inputs=validation_inputs,
-        classes=classes,
-        method=method,
-        nb_concepts_ratio=args.nb_concepts_ratio,
+        method_name=args.method,
+        nb_concepts=nb_concepts,
         activations_difference=args.activations_difference,
-        interpretation=interpretation,
-        llm_model=args.llm_model if args.interpretation == "llm" else None,
-        device=args.device,
-        batch_size=args.batch_size,
+        interpretation_name=interpretation_name,
+        classes=classes,
     )
 
     # Iterate over all class subsets.
@@ -266,10 +242,6 @@ def main() -> None:
             classes_subset,
         )
 
-        # Compute local importances for all samples used by any seed.
-        # Old ConSim expects a flat tensor (nb_lp_samples, nb_concepts) per seed.
-        # We'll compute them per-seed in the loop below.
-
         with tqdm(
             total=len(seeds) * len(OLD_PROMPT_TYPES) * 2,
             desc=f"  subset {classes_subset}",
@@ -281,20 +253,19 @@ def main() -> None:
                 local_inputs = local_elements["texts"]
                 local_labels = torch.tensor(local_elements["labels"])
                 local_predictions = torch.tensor(local_elements["predictions"])
+                local_indices = list(local_elements["indices"])
 
-                # Compute local importances for learning phase samples.
-                # Old ConSim expects shape (nb_lp_samples, nb_concepts) — the importance
-                # of each concept for the PREDICTED class of each sample.
-                lp_local_importances = (
-                    concept_resources.concept_explainer.concept_output_gradient(
-                        inputs=local_inputs[:nb_learning_samples],
-                        concepts_x_gradients=True,
-                    )
+                # Load pre-computed local importances and extract per-predicted-class.
+                local_explanation = load_local_importances(
+                    concept_dir=concept_resources.concept_dir,
+                    sample_indices=local_indices,
+                    nb_learning_samples=nb_learning_samples,
                 )
-                # Each element is (1, nb_classes, nb_concepts), we need per-predicted-class.
+                # Old ConSim expects shape (nb_lp_samples, nb_concepts):
+                # importance of each concept for the PREDICTED class of each sample.
                 old_local_importances = torch.stack(
                     [
-                        lp_local_importances[i].squeeze(0)[
+                        local_explanation.local_importances[i][
                             int(local_predictions[i].item())
                         ]
                         for i in range(nb_learning_samples)

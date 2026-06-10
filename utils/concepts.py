@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 from typing import NamedTuple
@@ -10,7 +9,8 @@ import torch
 
 from interpreto.concepts import SemiNMFConcepts
 from interpreto.concepts.interpretations import LLMLabels, TopKInputs
-from interpreto.model_wrapping.llm_interface import OpenAILLM
+
+from utils.llm_interface import HuggingFaceLLM
 
 SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
 Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
@@ -348,6 +348,8 @@ def load_or_compute_interpretations(
     *,
     dataset_name: str | None = None,
     model_name: str | None = None,
+    device: str = "cuda",
+    batch_size: int = 8,
 ) -> dict[int, str]:
     interpretation_name = name_for(interpretation)
     config = get_interpretation_config(
@@ -386,8 +388,8 @@ def load_or_compute_interpretations(
 
         llm_labels_kwargs: dict[str, Any] = {
             "concept_explainer": concept_explainer,
-            "llm_interface": OpenAILLM(
-                api_key=os.getenv("OPENAI_API_KEY"), model=llm_model
+            "llm_interface": HuggingFaceLLM(
+                model=llm_model, device=device, batch_size=batch_size
             ),
             "k_examples": llm_config["k_examples"],
             "system_prompt": system_prompt,
@@ -541,6 +543,8 @@ def prepare_concept_explanation_resources(
         classes_names=classes,
         dataset_name=dataset_name,
         model_name=model_name,
+        device=device,
+        batch_size=batch_size,
     )
     global_importances = load_or_compute_global_importances(
         concept_explainer=concept_explainer,
@@ -577,3 +581,163 @@ def compute_local_concept_explanation(
     ]
 
     return LocalConceptExplanation(local_importances=local_importances)
+
+
+# ---------------------------------------------------------------------------
+# Pre-compute and cache local importances for all test samples.
+# ---------------------------------------------------------------------------
+
+
+def compute_and_cache_all_local_importances(
+    *,
+    concept_explainer,
+    test_inputs: list[str],
+    concept_dir: Path,
+    batch_size: int = 64,
+) -> list[torch.Tensor]:
+    """Compute concept_output_gradient for ALL test samples and cache to disk.
+
+    Stores a list of tensors (one per test sample, squeezed) at
+    ``concept_dir / "all_local_importances.pt"``.
+
+    Used by ``build_concepts.py`` so that ``make_prompts.py`` can load
+    pre-computed importances without needing the task model or interpreto.
+    """
+    cache_path = concept_dir / "all_local_importances.pt"
+    if cache_path.exists():
+        print(f"  Local importances already cached: {cache_path}")
+        return torch.load(cache_path, map_location="cpu")
+
+    print(f"  Computing local importances for {len(test_inputs)} test samples...")
+    raw_importances = concept_explainer.concept_output_gradient(
+        inputs=test_inputs,
+        concepts_x_gradients=True,
+        batch_size=batch_size,
+    )
+    # Squeeze the class dimension (same as compute_local_concept_explanation).
+    all_local_importances = [imp.squeeze(1) for imp in raw_importances]
+    torch.save(all_local_importances, cache_path)
+    print(f"  Cached at: {cache_path}")
+    return all_local_importances
+
+
+def load_local_importances(
+    *,
+    concept_dir: Path,
+    sample_indices: list[int],
+    nb_learning_samples: int,
+) -> LocalConceptExplanation:
+    """Load pre-computed local importances for specific sample indices.
+
+    Only the first ``nb_learning_samples`` indices are used (learning phase).
+    Raises FileNotFoundError if the cache does not exist.
+    """
+    cache_path = concept_dir / "all_local_importances.pt"
+    if not cache_path.exists():
+        raise FileNotFoundError(
+            f"Pre-computed local importances not found at {cache_path}. "
+            f"Run build_concepts.py first."
+        )
+    all_importances = torch.load(cache_path, map_location="cpu")
+    # Select only the learning-phase samples.
+    local_importances = [
+        all_importances[idx] for idx in sample_indices[:nb_learning_samples]
+    ]
+    return LocalConceptExplanation(local_importances=local_importances)
+
+
+# ---------------------------------------------------------------------------
+# Load-only function for make_prompts.py (no interpreto / task model needed).
+# ---------------------------------------------------------------------------
+
+
+def get_concept_dir(
+    *,
+    save_root: Path,
+    method_name: str,
+    nb_concepts: int,
+    activations_difference: bool,
+) -> Path:
+    """Reconstruct the concept_dir path from parameters."""
+    diff_str = "_diff" if activations_difference else ""
+    return save_root / "concept_models" / f"{method_name}{diff_str}_nc{nb_concepts}"
+
+
+def load_concept_explanation_resources(
+    *,
+    save_root: Path,
+    method_name: str,
+    nb_concepts: int,
+    activations_difference: bool,
+    interpretation_name: str,
+    classes: list[str],
+    device: str = "cpu",
+) -> GlobalConceptExplanation:
+    """Load pre-built concept resources from cache (load-only, never creates).
+
+    Raises FileNotFoundError if any required artifact is missing.
+    Does NOT require interpreto or the task model — only reads cached files.
+    """
+    concept_dir = get_concept_dir(
+        save_root=save_root,
+        method_name=method_name,
+        nb_concepts=nb_concepts,
+        activations_difference=activations_difference,
+    )
+
+    # Check concept model exists (we don't load it — not needed for prompts).
+    concept_model_path = concept_dir / "concept_model.pt"
+    if not concept_model_path.exists():
+        raise FileNotFoundError(
+            f"Concept model not found at {concept_model_path}. "
+            f"Run build_concepts.py first."
+        )
+
+    # Load interpretations.
+    # Determine interpretation filename from config.
+    if interpretation_name == "TopKInputs":
+        # Check for BIOS-style topk_words filename first, then standard.
+        for fname in ("topk_words_interpretations.json", "topk_interpretations.json"):
+            interp_path = concept_dir / fname
+            if interp_path.exists():
+                break
+        else:
+            raise FileNotFoundError(
+                f"TopK interpretations not found in {concept_dir}. "
+                f"Run build_concepts.py first."
+            )
+    elif interpretation_name == "LLMLabels":
+        interp_path = concept_dir / "llm_interpretations.json"
+        if not interp_path.exists():
+            raise FileNotFoundError(
+                f"LLM interpretations not found at {interp_path}. "
+                f"Run build_concepts.py first."
+            )
+    else:
+        raise ValueError(f"Unknown interpretation: {interpretation_name}")
+
+    with open(interp_path) as handle:
+        raw_interpretations = json.load(handle)
+    concepts_interpretation = {int(k): v for k, v in raw_interpretations.items()}
+
+    # Load global importances.
+    importances_path = concept_dir / "importances.pt"
+    if not importances_path.exists():
+        raise FileNotFoundError(
+            f"Global importances not found at {importances_path}. "
+            f"Run build_concepts.py first."
+        )
+    global_importances = torch.load(importances_path, map_location=device)
+    # Handle both pre-reduced (mean already applied) and raw stacked tensors.
+    if global_importances.dim() > 2:
+        global_importances = global_importances.squeeze().mean(dim=0)
+
+    return GlobalConceptExplanation(
+        concept_explainer=None,  # Not needed — local importances are pre-computed.
+        concepts_interpretation=concepts_interpretation,
+        global_importances=global_importances,
+        method_name=method_name,
+        interpretation_name=interpretation_name,
+        nb_concepts=nb_concepts,
+        concept_dir=concept_dir,
+    )
