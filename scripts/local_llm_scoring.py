@@ -32,7 +32,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from utils.data import iter_jsonl
+from utils.data import iter_jsonl, LLM_MODELS, resolve_llm_model
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge-model",
         required=True,
-        help="HuggingFace model name for the LLM judge (e.g. Qwen/Qwen3.5-9B).",
+        help=f"LLM judge model. Short names: {', '.join(LLM_MODELS.keys())}.",
     )
     parser.add_argument(
         "--prompt-file",
@@ -246,6 +246,9 @@ def score_prompt_group_old(answer: str, expected_answers: list[str]) -> float:
 def main() -> None:
     args = parse_args()
     thinking = args.thinking and not args.no_thinking
+
+    # Resolve short model name.
+    args.judge_model = resolve_llm_model(args.judge_model)
 
     prompt_path = args.prompt_file
     if not prompt_path.exists():

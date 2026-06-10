@@ -97,6 +97,57 @@ How important each text is for the behavior is listed after each example in pare
 - These are examples from the emotion dataset, hence concepts correspond to differentiators between the classes. Do not reference them in your label, but take them into account when labelling. Classes: 
 """
 
+AG_NEWS_SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
+Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
+Guidelines:
+
+You will be given a list of text examples.
+How important each text is for the behavior is listed after each example in parentheses, with importance from 0 to 10.
+
+- Try to produce a concise final description. Simply describe the text features that are common in the examples, and what patterns you found.
+- If the examples are uninformative, you don't need to mention them. Don't focus on giving examples, but try to summarize the patterns found in the examples.
+- Do not make lists of possible explanations. Find a single concept that best describes the examples.
+- Strike the balance between being concise and informative. From 1 to 5 words. 5 is an absolute maximum.
+- Refrain from including uninformative elements like "patterns found include ...", "the examples show ...", or "text contains ...".
+- Here are some examples: geopolitical conflict, stock market, team performance, software release, trade agreements, championship results, corporate earnings, space exploration...
+- Do not hesitate to qualify the concepts, 'technology' can be 'consumer electronics'..., or 'politics' could be 'diplomatic tensions'.
+- These are examples from the AG News dataset, hence concepts correspond to differentiators between the classes. Do not reference them in your label, but take them into account when labelling. Classes: 
+"""
+
+ROTTEN_TOMATOES_SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
+Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
+Guidelines:
+
+You will be given a list of text examples.
+How important each text is for the behavior is listed after each example in parentheses, with importance from 0 to 10.
+
+- Try to produce a concise final description. Simply describe the text features that are common in the examples, and what patterns you found.
+- If the examples are uninformative, you don't need to mention them. Don't focus on giving examples, but try to summarize the patterns found in the examples.
+- Do not make lists of possible explanations. Find a single concept that best describes the examples.
+- Strike the balance between being concise and informative. From 1 to 5 words. 5 is an absolute maximum.
+- Refrain from including uninformative elements like "patterns found include ...", "the examples show ...", or "text contains ...".
+- Here are some examples: sharp wit, dull pacing, visual brilliance, weak dialogue, emotional depth, predictable plot, strong performances, lazy writing...
+- Do not hesitate to qualify the concepts, 'acting' can be 'nuanced lead performance'..., or 'story' could be 'formulaic romance plot'.
+- These are examples from the Rotten Tomatoes movie review dataset, hence concepts correspond to differentiators between the classes. Do not reference them in your label, but take them into account when labelling. Classes: 
+"""
+
+IMDB_SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
+Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
+Guidelines:
+
+You will be given a list of text examples.
+How important each text is for the behavior is listed after each example in parentheses, with importance from 0 to 10.
+
+- Try to produce a concise final description. Simply describe the text features that are common in the examples, and what patterns you found.
+- If the examples are uninformative, you don't need to mention them. Don't focus on giving examples, but try to summarize the patterns found in the examples.
+- Do not make lists of possible explanations. Find a single concept that best describes the examples.
+- Strike the balance between being concise and informative. From 1 to 5 words. 5 is an absolute maximum.
+- Refrain from including uninformative elements like "patterns found include ...", "the examples show ...", or "text contains ...".
+- Here are some examples: compelling narrative, poor acting, cinematography praise, plot holes, character development, waste of time, masterful direction, disappointing sequel...
+- Do not hesitate to qualify the concepts, 'acting' can be 'over-the-top villain'..., or 'quality' could be 'low-budget effects'.
+- These are examples from the IMDB movie review dataset, hence concepts correspond to differentiators between the classes. Do not reference them in your label, but take them into account when labelling. Classes: 
+"""
+
 
 def name_for(obj) -> str:
     return obj.__name__ if hasattr(obj, "__name__") else str(obj)
@@ -256,6 +307,27 @@ def get_interpretation_config(
                 },
             }
         )
+        return config
+
+    if (
+        dataset_name == "fancyzhx/ag_news"
+        and model_name == "raulbs7/ag-news-classifier"
+    ):
+        config["llm"]["system_prompt"] = AG_NEWS_SYSTEM_PROMPT
+        return config
+
+    if (
+        dataset_name == "cornell-movie-review-data/rotten_tomatoes"
+        and model_name == "keerthi1515/roberta-sentiment-rotten-tomatoes"
+    ):
+        config["llm"]["system_prompt"] = ROTTEN_TOMATOES_SYSTEM_PROMPT
+        return config
+
+    if (
+        dataset_name == "stanfordnlp/imdb"
+        and model_name == "philipobiorah/bert-imdb-model"
+    ):
+        config["llm"]["system_prompt"] = IMDB_SYSTEM_PROMPT
         return config
 
     return config

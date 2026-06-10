@@ -136,8 +136,8 @@ class ConSim:
     To evaluate explanations on a given model $f$, ConSim evaluates to which extent explanations
     help a meta-predictor $\\Psi$ to simulate the predictions of the model $f$.
 
-    In our case, the role of the meta-predictor will be played by `user_llm`, and interface calling
-    a model either from local, or from a remote API, such as OpenAI or HuggingFace.
+    In our case, the role of the meta-predictor will be played by `user_llm`, an interface calling
+    a local HuggingFace model.
     Therefore, most of the code correspond to building the prompts for the LLM.
 
     There are three steps to ConSim:
@@ -216,7 +216,7 @@ class ConSim:
     Examples:
         Preamble to a metric, fit a concept explainer:
         >>> import datasets
-        >>> from interpreto import ConSim, ModelWithSplitPoints, ICAConcepts, OpenAILLM
+        >>> from interpreto import ConSim, ModelWithSplitPoints, ICAConcepts
         >>>
         >>> # ------------------------
         >>> # Load a model and wrap it
@@ -241,7 +241,8 @@ class ConSim:
         The two steps of ConSim:
         >>> # ------------------------------------------------------------------
         >>> # Step 0: Define the User-LLM and instantiate the ConSim metric
-        >>> user_llm = OpenAILLM(api_key="YOUR_OPENAI_API_KEY", model="gpt-4.1-nano")
+        >>> from utils.llm_interface import HuggingFaceLLM
+        >>> user_llm = HuggingFaceLLM(model="meta-llama/Llama-3.1-8B-Instruct")
         >>> consim = ConSim(
         ...     model_with_split_points,
         ...     user_llm,

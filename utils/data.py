@@ -16,6 +16,9 @@ MODELS_DATASETS = {
     "nateraw/bert-base-uncased-emotion": "dair-ai/emotion",
     "Hate-speech-CNERG/bert-base-uncased-hatexplain": "Hate-speech-CNERG/hatexplain",
     "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": "LabHC/bias_in_bios",
+    "raulbs7/ag-news-classifier": "fancyzhx/ag_news",
+    "keerthi1515/roberta-sentiment-rotten-tomatoes": "cornell-movie-review-data/rotten_tomatoes",
+    "philipobiorah/bert-imdb-model": "stanfordnlp/imdb",
 }
 
 ABBREVIATIONS = {
@@ -24,12 +27,18 @@ ABBREVIATIONS = {
         "nateraw/bert-base-uncased-emotion": "B",
         "Hate-speech-CNERG/bert-base-uncased-hatexplain": "B",
         "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": "RB",
+        "raulbs7/ag-news-classifier": "DB",
+        "keerthi1515/roberta-sentiment-rotten-tomatoes": "RB",
+        "philipobiorah/bert-imdb-model": "B",
     },
     "datasets": {
         "google-research-datasets/go_emotions": "GE",
         "dair-ai/emotion": "E",
         "Hate-speech-CNERG/hatexplain": "HE",
         "LabHC/bias_in_bios": "BIOS",
+        "fancyzhx/ag_news": "AG",
+        "cornell-movie-review-data/rotten_tomatoes": "RT",
+        "stanfordnlp/imdb": "IMDB",
     },
 }
 DATASET_CLASSES_NAMES = {
@@ -99,6 +108,20 @@ DATASET_CLASSES_NAMES = {
         "psychologist",  # 26
         "dietitian",  # 27
     ],
+    "fancyzhx/ag_news": [
+        "World",  # 0
+        "Sports",  # 1
+        "Business",  # 2
+        "Sci/Tech",  # 3
+    ],
+    "cornell-movie-review-data/rotten_tomatoes": [
+        "neg",  # 0
+        "pos",  # 1
+    ],
+    "stanfordnlp/imdb": [
+        "neg",  # 0
+        "pos",  # 1
+    ],
 }
 
 DATASET_LABEL_COLUMNS = {
@@ -106,6 +129,9 @@ DATASET_LABEL_COLUMNS = {
     "dair-ai/emotion": "label",
     "LabHC/bias_in_bios": "profession",
     "Hate-speech-CNERG/hatexplain": "label",
+    "fancyzhx/ag_news": "label",
+    "cornell-movie-review-data/rotten_tomatoes": "label",
+    "stanfordnlp/imdb": "label",
 }
 
 MODEL_SPLIT_POINTS = {
@@ -113,6 +139,9 @@ MODEL_SPLIT_POINTS = {
     "nateraw/bert-base-uncased-emotion": "bert.pooler",
     "Hate-speech-CNERG/bert-base-uncased-hatexplain": "bert.pooler",
     "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": 11,
+    "raulbs7/ag-news-classifier": "auto",
+    "keerthi1515/roberta-sentiment-rotten-tomatoes": "auto",
+    "philipobiorah/bert-imdb-model": "auto",
 }
 
 # Canonical class subsets for each dataset.
@@ -137,7 +166,34 @@ DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
         [3, 5, 13],  # professor, software_developer, architect
         [2, 12, 21],  # photographer, journalist, filmmaker
     ],
+    "fancyzhx/ag_news": [
+        [0, 1, 2, 3],  # all classes: World, Sports, Business, Sci/Tech
+    ],
+    "cornell-movie-review-data/rotten_tomatoes": [
+        [0, 1],  # all classes: neg, pos
+    ],
+    "stanfordnlp/imdb": [
+        [0, 1],  # all classes: neg, pos
+    ],
 }
+
+# Short-name registry for LLM models used across the repo (judging, rationales, labeling).
+# Keys are CLI-friendly short names; values are full HuggingFace model paths.
+LLM_MODELS: dict[str, str] = {
+    "llama3.2-3b": "meta-llama/Llama-3.2-3B-Instruct",
+    "llama3.1-8b": "meta-llama/Llama-3.1-8B-Instruct",
+    "qwen3.5-9b": "Qwen/Qwen3.5-9B",
+    "qwen3.6-27b": "Qwen/Qwen3.6-27B",
+    "phi4": "microsoft/phi-4",
+    "ministral-14b": "mistralai/Ministral-3-14B-Instruct-2512",
+    "gemma4-31b": "google/gemma-4-31B-it",
+    "gpt-oss-20b": "openai/gpt-oss-20b",
+}
+
+
+def resolve_llm_model(name: str) -> str:
+    """Resolve a short model alias to its full HuggingFace path. Pass through if not found."""
+    return LLM_MODELS.get(name, name)
 
 
 def iter_jsonl(path: Path):
@@ -177,20 +233,7 @@ def load_dataset_splits(dataset: str):
         ]
         test_inputs = list(test_split["hard_text"])
         test_labels = list(test_split[DATASET_LABEL_COLUMNS.get(dataset, "label")])
-    elif dataset != "Hate-speech-CNERG/hatexplain":
-        train_inputs = list(dataset_dict["train"].shuffle(seed=0)["text"])
-        validation_inputs = list(dataset_dict["validation"]["text"])
-        test_inputs = []
-        test_labels = []
-        for i in range(len(dataset_dict["test"])):
-            label = dataset_dict["test"][DATASET_LABEL_COLUMNS.get(dataset, "label")][i]
-            if isinstance(label, list):
-                if len(label) > 1:
-                    continue
-                label = label[0]
-            test_labels.append(label)
-            test_inputs.append(dataset_dict["test"]["text"][i])
-    else:
+    elif dataset == "Hate-speech-CNERG/hatexplain":
         train_inputs = [" ".join(x["post_tokens"]) for x in dataset_dict["train"]]  # type: ignore
         validation_inputs = [
             " ".join(x["post_tokens"])  # type: ignore
@@ -207,6 +250,30 @@ def load_dataset_splits(dataset: str):
                 test_labels.append(label)
                 labels_indices.append(i)
         test_inputs = [test_inputs[i] for i in labels_indices]
+    else:
+        # Generic path for datasets with a "text" column and integer "label".
+        shuffled_train = dataset_dict["train"].shuffle(seed=0)
+        all_train_texts = list(shuffled_train["text"])
+
+        # Some datasets lack a dedicated validation split; carve one from train.
+        if "validation" in dataset_dict:
+            train_inputs = all_train_texts[:50000]
+            validation_inputs = list(dataset_dict["validation"]["text"])
+        else:
+            val_size = min(5000, len(all_train_texts) // 5)
+            train_inputs = all_train_texts[:-val_size][:50000]
+            validation_inputs = all_train_texts[-val_size:]
+
+        test_inputs = []
+        test_labels = []
+        for i in range(len(dataset_dict["test"])):
+            label = dataset_dict["test"][DATASET_LABEL_COLUMNS.get(dataset, "label")][i]
+            if isinstance(label, list):
+                if len(label) > 1:
+                    continue
+                label = label[0]
+            test_labels.append(label)
+            test_inputs.append(dataset_dict["test"]["text"][i])
     return train_inputs, validation_inputs, test_inputs, torch.tensor(test_labels)
 
 
