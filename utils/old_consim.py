@@ -69,41 +69,41 @@ class PromptTypes(Enum):
     There are six types of prompts, including two baselines and an upper bond:
 
     Attributes:
-        `L1_baseline_without_lp`:
+        `B1_baseline_without_lp`:
             IP.1 and EP.1 are included in the prompt.
             Only the task description, but explanations or learning phase.
 
-        `E1_global_concepts_without_lp`:
+        `C1_global_concepts_without_lp`:
             IP.1, IP.2, and EP.1 are included in the prompt.
             Only task description and global concepts explanation, but no learning phase.
 
-        `L2_baseline_with_lp`:
+        `B2_baseline_with_lp`:
             IP.1, LP.1, and EP.1 are included in the prompt.
             Task description and learning phase, but no explanations.
 
-        `E2_global_concepts_with_lp`:
+        `C2_global_concepts_with_lp`:
             IP.1, IP.2, LP.1, and EP.1 are included in the prompt.
             Task description, global concepts explanation, and learning phase. But no local concepts explanation.
 
-        `E3_global_and_local_concepts_with_lp`:
+        `C3_global_and_local_concepts_with_lp`:
             IP.1, IP.2, LP.1, LP.2, and EP.1 are included in the prompt.
             Task description, learning phase, and both global and local concepts explanation.
 
         `U1_upper_bound_concepts_at_ep`:
             IP.1, IP.2, LP.1, LP.2, EP.1, and EP.2 are included in the prompt.
-            Same as `E3_global_and_local_concepts_with_lp`, but local explanations are also given at evaluation phase.
+            Same as `C3_global_and_local_concepts_with_lp`, but local explanations are also given at evaluation phase.
             This has a very high probability to leak the initial model predictions via EP local explanations.
             Warning, this should not be considered as a ConSim score.
             But it gives an upper bound to the ConSim scores.
     """
 
-    L1_baseline_without_lp = PromptSetting()
-    E1_global_concepts_without_lp = PromptSetting(concepts_interpretation=True, concepts_global_importances=True)
-    L2_baseline_with_lp = PromptSetting(lp_samples=True, lp_labels=True)
-    E2_global_concepts_with_lp = PromptSetting(
+    B1_baseline_without_lp = PromptSetting()
+    C1_global_concepts_without_lp = PromptSetting(concepts_interpretation=True, concepts_global_importances=True)
+    B2_baseline_with_lp = PromptSetting(lp_samples=True, lp_labels=True)
+    C2_global_concepts_with_lp = PromptSetting(
         concepts_interpretation=True, concepts_global_importances=True, lp_samples=True, lp_labels=True
     )
-    E3_global_and_local_concepts_with_lp = PromptSetting(
+    C3_global_and_local_concepts_with_lp = PromptSetting(
         concepts_interpretation=True,
         concepts_global_importances=True,
         lp_samples=True,
@@ -257,8 +257,8 @@ class ConSim:
         >>>
         >>> # -------------------------------------------------------------
         >>> # Step 2: Evaluate the ConSim score, do not forget the baseline
-        >>> baseline = consim.evaluate(samples, labels, predictions, prompt_type=PromptTypes.L2_baseline_with_lp)
-        >>> consim_score = consim.evaluate(samples, labels, predictions, concept_explainer_1, prompt_type=PromptTypes.E3_global_and_local_concepts_with_lp)
+        >>> baseline = consim.evaluate(samples, labels, predictions, prompt_type=PromptTypes.B2_baseline_with_lp)
+        >>> consim_score = consim.evaluate(samples, labels, predictions, concept_explainer_1, prompt_type=PromptTypes.C3_global_and_local_concepts_with_lp)
     """
 
     prompt_types: type[PromptTypes] = PromptTypes
@@ -885,7 +885,7 @@ class ConSim:
         concepts_interpretation: dict[int, str] | None,
         global_importances: dict[str, dict[int, float]] | None,
         local_importances: torch.Tensor | None,
-        prompt_type: PromptTypes = PromptTypes.E3_global_and_local_concepts_with_lp,
+        prompt_type: PromptTypes = PromptTypes.C3_global_and_local_concepts_with_lp,
         anonymize_classes: bool = False,
         importance_threshold: float = 0.05,
     ) -> tuple[list[tuple[Role, str]], list[str]]:
@@ -915,15 +915,15 @@ class ConSim:
             prompt_type: PromptTypes
                 The type of prompt to use. Possible values are:
 
-                - `PromptTypes.L1_baseline_without_lp`: baseline without learning phase.
+                - `PromptTypes.B1_baseline_without_lp`: baseline without learning phase.
 
-                - `PromptTypes.E1_global_concepts_without_lp`: global concepts without learning phase.
+                - `PromptTypes.C1_global_concepts_without_lp`: global concepts without learning phase.
 
-                - `PromptTypes.L2_baseline_with_lp`: baseline with learning phase.
+                - `PromptTypes.B2_baseline_with_lp`: baseline with learning phase.
 
-                - `PromptTypes.E2_global_concepts_with_lp`: global concepts with learning phase.
+                - `PromptTypes.C2_global_concepts_with_lp`: global concepts with learning phase.
 
-                - `PromptTypes.E3_global_and_local_concepts_with_lp`: global and local concepts with learning phase.
+                - `PromptTypes.C3_global_and_local_concepts_with_lp`: global and local concepts with learning phase.
 
                 - `PromptTypes.U1_upper_bound_concepts_at_ep`: upper bound - concepts at evaluation phase.
 
@@ -981,7 +981,7 @@ class ConSim:
             )
 
         # filter and quantize the concepts importances
-        if prompt_type in [PromptTypes.L1_baseline_without_lp, PromptTypes.L2_baseline_with_lp]:
+        if prompt_type in [PromptTypes.B1_baseline_without_lp, PromptTypes.B2_baseline_with_lp]:
             concepts_interpretation = None
             processed_global_importances = None
             processed_local_importances = None
@@ -1158,7 +1158,7 @@ class ConSim:
         concept_explainer: ConceptAutoEncoderExplainer | None = None,
         concepts_interpretation: dict[int, str] | None = None,
         global_importances: dict[str, dict[int, float]] | None = None,
-        prompt_type: PromptTypes = PromptTypes.E3_global_and_local_concepts_with_lp,
+        prompt_type: PromptTypes = PromptTypes.C3_global_and_local_concepts_with_lp,
         anonymize_classes: bool = False,
         importance_threshold: float = 0.05,
     ) -> float | None | tuple[list[tuple[Role, str]], list[str]]:
@@ -1210,15 +1210,15 @@ class ConSim:
             prompt_type: PromptTypes
                 The type of prompt to use. Possible values are:
 
-                - `PromptTypes.L1_baseline_without_lp`: baseline without learning phase.
+                - `PromptTypes.B1_baseline_without_lp`: baseline without learning phase.
 
-                - `PromptTypes.E1_global_concepts_without_lp`: global concepts without learning phase.
+                - `PromptTypes.C1_global_concepts_without_lp`: global concepts without learning phase.
 
-                - `PromptTypes.L2_baseline_with_lp`: baseline with learning phase.
+                - `PromptTypes.B2_baseline_with_lp`: baseline with learning phase.
 
-                - `PromptTypes.E2_global_concepts_with_lp`: global concepts with learning phase.
+                - `PromptTypes.C2_global_concepts_with_lp`: global concepts with learning phase.
 
-                - `PromptTypes.E3_global_and_local_concepts_with_lp`: global and local concepts with learning phase.
+                - `PromptTypes.C3_global_and_local_concepts_with_lp`: global and local concepts with learning phase.
 
                 - `PromptTypes.U1_upper_bound_concepts_at_ep`: upper bound - concepts at evaluation phase.
 
@@ -1258,10 +1258,10 @@ class ConSim:
             # For now we force gradient-input
             # TODO: precise shapes with jaxtyping
             if prompt_type in [
-                PromptTypes.E3_global_and_local_concepts_with_lp,
+                PromptTypes.C3_global_and_local_concepts_with_lp,
                 PromptTypes.U1_upper_bound_concepts_at_ep,
             ]:
-                if prompt_type is PromptTypes.E3_global_and_local_concepts_with_lp:
+                if prompt_type is PromptTypes.C3_global_and_local_concepts_with_lp:
                     samples_to_explain = interesting_samples[: len(interesting_samples) // 2]
                 else:
                     samples_to_explain = interesting_samples

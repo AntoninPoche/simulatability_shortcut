@@ -58,7 +58,7 @@ from utils.rationales import (
     load_or_generate_rationales,
     group_rationales_by_seed,
 )
-from utils.rationales_simulatability import (
+from utils.ratsim import (
     RationalePromptTypes,
     RationalesSimulatability,
 )
@@ -88,23 +88,17 @@ INTERPRETATIONS = {
 
 # Prompt types for each explanation family.
 CONCEPT_PROMPT_TYPES = {
-    PromptTypes.L1_baseline_without_lp,
-    PromptTypes.E1_global_concepts_without_lp,
-    PromptTypes.L2_baseline_with_lp,
-    PromptTypes.E2_global_concepts_with_lp,
-    PromptTypes.E3_global_and_local_concepts_with_lp,
-    PromptTypes.C1_contrastive_global_concepts_without_lp,
-    PromptTypes.C2_contrastive_global_concepts_with_lp,
-    PromptTypes.C3_contrastive_global_and_local_concepts_with_lp,
-    PromptTypes.C4_contrastive_local_concepts,
-    PromptTypes.C5_contrastive_local_only,
+    PromptTypes.B1_baseline_without_lp,
+    PromptTypes.C1_global_concepts_without_lp,
+    PromptTypes.B2_baseline_with_lp,
+    PromptTypes.C2_global_concepts_with_lp,
+    PromptTypes.C3_global_and_local_concepts_with_lp,
 }
 
 RATIONALE_PROMPT_TYPES = {
-    RationalePromptTypes.L1_baseline_without_lp,
-    RationalePromptTypes.L2_baseline_with_lp,
-    RationalePromptTypes.R_justify_with_lp,
-    RationalePromptTypes.RC_contrastive_with_lp,
+    RationalePromptTypes.B1_baseline_without_lp,
+    RationalePromptTypes.B2_baseline_with_lp,
+    RationalePromptTypes.R1_justify_with_lp,
 }
 
 
@@ -199,11 +193,6 @@ def parse_seeds(seeds_str: str) -> list[int]:
     return [int(s) for s in seeds_str.split(",")]
 
 
-def get_output_path(dataset_abbrev: str, explanation_family: str) -> Path:
-    """Output JSONL path split by dataset and explanation family."""
-    return Path(f"data/prompts/{dataset_abbrev}_{explanation_family}.jsonl")
-
-
 def generate_prompts_for_subset(
     *,
     args: argparse.Namespace,
@@ -231,7 +220,7 @@ def generate_prompts_for_subset(
     if explanation_family == "concepts":
         prompt_types = CONCEPT_PROMPT_TYPES
         simulatability_metric = ConSim(classes=classes)
-        specification = "verbalized importance"
+        specification = "new_consim"
     else:
         prompt_types = RATIONALE_PROMPT_TYPES
         simulatability_metric = RationalesSimulatability(classes=classes)
@@ -252,7 +241,6 @@ def generate_prompts_for_subset(
     # Prepare explanation-specific resources.
     concept_resources = None
     rationale_by_seed = None
-    contrastive_by_seed = None
 
     if explanation_family == "concepts":
         method = METHODS[args.method]
@@ -276,8 +264,7 @@ def generate_prompts_for_subset(
     else:
         # Rationale path: generate rationales for all samples used by any seed.
         seed_indices = {
-            seed: list(local_elements_by_seed[seed]["indices"])
-            for seed in seeds
+            seed: list(local_elements_by_seed[seed]["indices"]) for seed in seeds
         }
         required_test_indices = sorted(
             {index for indices in seed_indices.values() for index in indices}
@@ -294,7 +281,7 @@ def generate_prompts_for_subset(
             batch_size=args.rationale_batch_size,
             max_new_tokens=args.max_new_tokens,
         )
-        rationale_by_seed, contrastive_by_seed = group_rationales_by_seed(
+        rationale_by_seed = group_rationales_by_seed(
             rationales=rationales,
             seed_indices=seed_indices,
         )
@@ -324,7 +311,6 @@ def generate_prompts_for_subset(
                 )
             else:
                 local_rationales = rationale_by_seed[seed]
-                local_contrastives = contrastive_by_seed[seed]
 
             for prompt_type, anonym in itertools.product(prompt_types, [True, False]):
                 prompt_type_name = prompt_type.name.split("_")[0]
@@ -343,9 +329,6 @@ def generate_prompts_for_subset(
                         "concepts_interpretation": concept_resources.concepts_interpretation,
                         "global_importances": concept_resources.global_importances,
                         "local_importances": local_explanation.local_importances,
-                        "contrastive_pairs": list(
-                            itertools.permutations(classes_subset, 2)
-                        ),
                     }
                 else:
                     method_name = args.method if not is_baseline else "baseline"
@@ -353,20 +336,19 @@ def generate_prompts_for_subset(
                     interpretation_name = None
                     construct_prompt_kwargs = {
                         "rationales": local_rationales,
-                        "contrastives": local_contrastives,
                     }
 
                 str_key = str(
                     (
-                        dataset_abbrev,          # 0
-                        model_abbrev,            # 1
-                        str(classes_subset),     # 2
-                        seed,                    # 3
-                        method_name,             # 4
-                        nb_concepts,             # 5
-                        interpretation_name,     # 6
+                        dataset_abbrev,  # 0
+                        model_abbrev,  # 1
+                        str(classes_subset),  # 2
+                        seed,  # 3
+                        method_name,  # 4
+                        nb_concepts,  # 5
+                        interpretation_name,  # 6
                         prompt_type_name if not anonym else "A" + prompt_type_name,  # 7
-                        specification,           # 8
+                        specification,  # 8
                     )
                 )
                 if str_key in existing_keys:
@@ -411,7 +393,7 @@ def main() -> None:
     save_root.mkdir(parents=True, exist_ok=True)
 
     # Determine output path.
-    output_path = get_output_path(args.dataset, args.explanation_family)
+    output_path = Path(f"data/prompts/{args.dataset}_{args.explanation_family}.jsonl")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Load existing keys for skip-already-done.

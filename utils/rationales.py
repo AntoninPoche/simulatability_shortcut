@@ -23,12 +23,10 @@ def construct_rationale_prompt(
     label: int,
     prediction: int,
     dataset_name: str,
-) -> tuple[str, str | None]:
+) -> str:
     """
     Construct a prompt for rationale generation.
-    It creates both the classic rationale and the contrastive version if label and prediction differ.
     """
-    str_label = DATASET_CLASSES_NAMES[dataset_name][label]
     str_prediction = DATASET_CLASSES_NAMES[dataset_name][prediction]
 
     # Rationale prompt
@@ -38,19 +36,7 @@ def construct_rationale_prompt(
     rationale_prompt += f"Predicted {label_nature}: {str_prediction}\n\n"
     rationale_prompt += "Explanation:"
 
-    # Skip contrastive rationale if label and prediction are the same
-    if label == prediction:
-        return rationale_prompt, None
-
-    # Contrastive rationale prompt
-    contrastive_prompt = f"Given the following text, provide a brief explanation (< 50 words) justifying why the predicted {label_nature} label is more appropriate than the alternative label.\n\n"
-    contrastive_prompt += f"Text: '{text}'\n"
-    contrastive_prompt += f"Predicted {label_nature}: {str_prediction}\n"
-    contrastive_prompt += f"Alternative {label_nature}: {str_label}\n\n"
-    contrastive_prompt += (
-        f"Explain why '{str_prediction}' fits better than '{str_label}':"
-    )
-    return rationale_prompt, contrastive_prompt
+    return rationale_prompt
 
 
 def prepare_rationale_prompts(
@@ -61,14 +47,11 @@ def prepare_rationale_prompts(
     dataset_name: str,
     tokenizer,
     missing_sample_ids: list[int],
-) -> list[tuple[int, str, str]]:
+) -> list[tuple[int, str]]:
     """
     Pre-render all prompts for the samples that still need generations.
-
-    The rationale is always appended last for each sample. This lets the caller
-    flush one JSONL row as soon as the rationale response is decoded.
     """
-    prepared_prompts: list[tuple[int, str, str]] = []
+    prepared_prompts: list[tuple[int, str]] = []
     sample_id_to_offset = {
         sample_id: offset for offset, sample_id in enumerate(sample_ids)
     }
@@ -78,28 +61,18 @@ def prepare_rationale_prompts(
         text = inputs[offset]
         label = labels[offset]
         prediction = predictions[offset]
-        rationale_prompt, contrastive_prompt = construct_rationale_prompt(
+        rationale_prompt = construct_rationale_prompt(
             text, int(label.item()), int(prediction.item()), dataset_name
         )
 
-        # Put the optional contrastive prompt first so the rationale is always
-        # the last response we receive for a given sample.
-        prompts = [
-            ("contrastive", contrastive_prompt),
-            ("rationale", rationale_prompt),
-        ]
-        for field, prompt in prompts:
-            if prompt is None:
-                continue
-
-            messages = [{"role": "user", "content": prompt}]
-            rendered_prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-            prepared_prompts.append((sample_id, field, rendered_prompt))
+        messages = [{"role": "user", "content": rationale_prompt}]
+        rendered_prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        prepared_prompts.append((sample_id, rendered_prompt))
 
     return prepared_prompts
 
@@ -167,16 +140,13 @@ def load_or_generate_rationales(
         missing_sample_ids=missing_sample_ids,
     )
 
-    # The rationale prompt is always appended last for a sample, so receiving it
-    # means the JSONL record is complete and can be flushed immediately.
-    pending_records: dict[int, dict[str, int | str | None]] = {}
     with open(save_path, "a") as handle:
         for batch_start in tqdm(
             range(0, len(prepared_prompts), batch_size),
             desc="Rationales",
         ):
             batch = prepared_prompts[batch_start : batch_start + batch_size]
-            batch_prompts = [prompt for _, _, prompt in batch]
+            batch_prompts = [prompt for _, prompt in batch]
 
             model_inputs = tokenizer(
                 batch_prompts,
@@ -197,26 +167,18 @@ def load_or_generate_rationales(
                 skip_special_tokens=True,
             )
 
-            for (sample_id, field, _), completion in zip(
+            for (sample_id, _), completion in zip(
                 batch,
                 completions,
                 strict=True,
             ):
-                record = pending_records.setdefault(
-                    sample_id,
-                    {
-                        "sample_id": sample_id,
-                        "rationale": None,
-                        "contrastive": None,
-                    },
-                )
-                record[field] = completion
-
-                if field == "rationale":
-                    json.dump(record, handle)
-                    handle.write("\n")
-                    cached_rationales[sample_id] = record.copy()
-                    del pending_records[sample_id]
+                record = {
+                    "sample_id": sample_id,
+                    "rationale": completion,
+                }
+                json.dump(record, handle)
+                handle.write("\n")
+                cached_rationales[sample_id] = record
 
     del tokenizer
     del model
@@ -229,21 +191,13 @@ def load_or_generate_rationales(
 def group_rationales_by_seed(
     rationales: dict[int, dict[str, int | str | None]],
     seed_indices: dict[int, list[int]],
-) -> tuple[dict[int, list[str]], dict[int, list[str]]]:
+) -> dict[int, list[str]]:
     """
-    Group rationale artifacts by key.
+    Group rationale artifacts by seed.
     """
     rationale_by_seed: dict[int, list[str]] = {}
-    contrastive_by_seed: dict[int, list[str]] = {}
     for seed, indices in seed_indices.items():
         rationale_by_seed[seed] = []
-        contrastive_by_seed[seed] = []
         for index in indices:
             rationale_by_seed[seed].append(rationales[index]["rationale"])  # type: ignore
-
-            # replace contrastive with rationale if contrastive is None
-            if rationales[index]["contrastive"] is None:
-                contrastive_by_seed[seed].append(rationales[index]["rationale"])  # type: ignore
-            else:
-                contrastive_by_seed[seed].append(rationales[index]["contrastive"])  # type: ignore
-    return rationale_by_seed, contrastive_by_seed
+    return rationale_by_seed

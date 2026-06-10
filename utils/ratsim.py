@@ -12,7 +12,6 @@ class RationalePromptSetting(NamedTuple):
     # learning phase configuration
     lp_samples: bool = False
     lp_rationale_justify: bool = False
-    lp_rationale_contrastive: bool = False
 
     # evaluation phase configuration
     include_input_text: bool = True
@@ -24,7 +23,6 @@ class RationalePromptSetting(NamedTuple):
         self,
         *,
         rationales: list[str] | None,
-        contrastives: list[str] | None,
         nb_learning_samples: int,
     ) -> None:
         """
@@ -33,8 +31,6 @@ class RationalePromptSetting(NamedTuple):
         Arguments:
             rationales: list[str] | None
                 Justify rationales for samples. Required when `lp_rationale_justify=True`.
-            contrastives: list[str] | None
-                Contrastive rationales for samples. Required when `lp_rationale_contrastive=True`.
             nb_learning_samples: int
                 Number of learning samples.
 
@@ -42,16 +38,10 @@ class RationalePromptSetting(NamedTuple):
             ValueError:
                 If the setting is inconsistent or requires missing inputs.
         """
-        if self.lp_rationale_justify and self.lp_rationale_contrastive:
-            raise ValueError(
-                "RationalePromptSetting.lp_rationale_justify and "
-                "RationalePromptSetting.lp_rationale_contrastive are mutually exclusive."
-            )
-
-        if self.lp_rationale_justify or self.lp_rationale_contrastive:
+        if self.lp_rationale_justify:
             if not self.lp_samples:
                 raise ValueError(
-                    "RationalePromptSetting.lp_rationale_justify or RationalePromptSetting.lp_rationale_contrastive "
+                    "RationalePromptSetting.lp_rationale_justify "
                     "requires `lp_samples=True`."
                 )
 
@@ -67,18 +57,6 @@ class RationalePromptSetting(NamedTuple):
                     f"Got {len(rationales)=} and {nb_learning_samples=}."
                 )
 
-        if self.lp_rationale_contrastive:
-            if contrastives is None:
-                raise ValueError(
-                    "RationalePromptSetting.lp_rationale_contrastive=True requires `contrastives` "
-                    "to be provided to RationalesSimulatability.construct_prompt()."
-                )
-            if len(contrastives) < nb_learning_samples:
-                raise ValueError(
-                    f"`contrastives` must have at least `nb_learning_samples` entries. "
-                    f"Got {len(contrastives)=} and {nb_learning_samples=}."
-                )
-
 
 class RationalePromptTypes(Enum):
     """
@@ -86,26 +64,19 @@ class RationalePromptTypes(Enum):
 
     Naming convention:
         - `B*`: baselines without rationales.
-        - `J*`: justify rationales.
-        - `C*`: contrastive rationales.
+        - `R*`: justify rationales.
         - `_anon`: with class anonymization.
         - `_with_lp` / `_without_lp`: whether learning-phase examples are included.
     """
 
     # Baselines (no rationales)
-    L1_baseline_without_lp = RationalePromptSetting()
-    L2_baseline_with_lp = RationalePromptSetting(lp_samples=True)
+    B1_baseline_without_lp = RationalePromptSetting()
+    B2_baseline_with_lp = RationalePromptSetting(lp_samples=True)
 
     # Justify rationale settings
-    R_justify_with_lp = RationalePromptSetting(
+    R1_justify_with_lp = RationalePromptSetting(
         lp_samples=True,
         lp_rationale_justify=True,
-    )
-
-    # Contrastive rationale settings
-    RC_contrastive_with_lp = RationalePromptSetting(
-        lp_samples=True,
-        lp_rationale_contrastive=True,
     )
 
 
@@ -129,7 +100,6 @@ class RationalesSimulatability(AutomatedSimulatability):
         nb_learning_samples: int,
         classes: dict[int, str],
         rationales: list[str] | None,
-        contrastives: list[str] | None,
     ) -> tuple[str, list[str], list[str]]:
         system_prompt_parts = []
 
@@ -143,11 +113,6 @@ class RationalesSimulatability(AutomatedSimulatability):
             task_description += (
                 "You will have examples of samples, labels, and explanations justifying "
                 "the predictions as reference for the task. "
-            )
-        elif setting.lp_rationale_contrastive:
-            task_description += (
-                "You will have examples of samples, labels, and contrastive explanations "
-                "(why predict this class and not the other) as reference for the task. "
             )
         elif setting.lp_samples:
             task_description += "You will have examples of samples and labels as reference for the task. "
@@ -187,11 +152,6 @@ class RationalesSimulatability(AutomatedSimulatability):
                 if setting.lp_rationale_justify and rationales is not None:
                     rationale = rationales[i]
                     block.append(f"\tExplanation: {rationale}")
-
-                # Add contrastive rationale
-                if setting.lp_rationale_contrastive and contrastives is not None:
-                    rationale = contrastives[i]
-                    block.append(f"\tContrastive Explanation: {rationale}")
 
                 learning_phase_blocks.append("\n".join(block))
 
@@ -243,7 +203,6 @@ class RationalesSimulatability(AutomatedSimulatability):
         corresponding_labels: torch.Tensor,
         nb_learning_samples: int,
         rationales: list[str] | None,
-        contrastives: list[str] | None,
         prompt_type: RationalePromptTypes | RationalePromptSetting,
     ) -> None:
         """
@@ -252,7 +211,6 @@ class RationalesSimulatability(AutomatedSimulatability):
         setting = RationalesSimulatability._resolve_prompt_setting(prompt_type)
         setting.validate(
             rationales=rationales,
-            contrastives=contrastives,
             nb_learning_samples=nb_learning_samples,
         )
 
@@ -284,7 +242,6 @@ class RationalesSimulatability(AutomatedSimulatability):
         nb_learning_samples: int,
         *,
         rationales: list[str] | None = None,
-        contrastives: list[str] | None = None,
     ) -> tuple[str, list[str], list[str]]:
         """
         Build the prompts needed to run a RationalesSimulatability evaluation.
@@ -298,7 +255,6 @@ class RationalesSimulatability(AutomatedSimulatability):
             corresponding_labels=corresponding_labels,
             nb_learning_samples=nb_learning_samples,
             rationales=rationales,
-            contrastives=contrastives,
             prompt_type=resolved_setting,
         )
 
@@ -315,5 +271,4 @@ class RationalesSimulatability(AutomatedSimulatability):
             nb_learning_samples=nb_learning_samples,
             classes=classes,
             rationales=rationales,
-            contrastives=contrastives,
         )
