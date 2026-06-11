@@ -40,7 +40,6 @@ from utils.data import (
     DATASET_CLASSES_NAMES,
     DATASET_CLASSES_SUBSETS,
     MODELS_DATASETS,
-    MODEL_SPLIT_POINTS,
     get_save_root,
     iter_jsonl,
     load_dataset_splits,
@@ -158,8 +157,7 @@ def main() -> None:
     # Resolve names.
     dataset_name = _ABBREV_TO_DATASET[args.dataset]
     model_name = _DATASET_TO_MODEL[dataset_name]
-    split_point = MODEL_SPLIT_POINTS[model_name]
-    save_root = get_save_root(model_name, split_point)
+    save_root = get_save_root(model_name)
     save_root.mkdir(parents=True, exist_ok=True)
 
     # Output path.
