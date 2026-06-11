@@ -134,16 +134,6 @@ DATASET_LABEL_COLUMNS = {
     "stanfordnlp/imdb": "label",
 }
 
-MODEL_SPLIT_POINTS = {
-    "SamLowe/roberta-base-go_emotions": 11,
-    "nateraw/bert-base-uncased-emotion": "bert.pooler",
-    "Hate-speech-CNERG/bert-base-uncased-hatexplain": "bert.pooler",
-    "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": 11,
-    "raulbs7/ag-news-classifier": "auto",
-    "keerthi1515/roberta-sentiment-rotten-tomatoes": "auto",
-    "philipobiorah/bert-imdb-model": "auto",
-}
-
 # Canonical class subsets for each dataset.
 # Each dataset has multiple subsets used in experiments.
 # All subsets for a given dataset are run together.
@@ -204,8 +194,8 @@ def iter_jsonl(path: Path):
             yield json.loads(line)
 
 
-def get_save_root(model_name: str, split_point: str | int) -> Path:
-    return Path("data") / model_name.replace("/", "_") / str(split_point)
+def get_save_root(model_name: str) -> Path:
+    return Path("data") / model_name.replace("/", "_")
 
 
 def get_local_elements_path(
