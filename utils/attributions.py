@@ -61,7 +61,7 @@ DATASET_GRANULARITY: dict[str, Granularity] = {
     # "Hate-speech-CNERG/hatexplain": Granularity.WORD,
     # "LabHC/bias_in_bios": Granularity.WORD,
     # Add future datasets that need sentence-level here:
-    # "imdb": Granularity.SENTENCE,
+    "stanfordnlp/imdb": Granularity.SENTENCE,
 }
 DEFAULT_GRANULARITY = Granularity.WORD
 
@@ -78,8 +78,12 @@ def _serialize_attribution(attr: AttributionOutput, sample_id: int) -> dict:
     return {
         "sample_id": sample_id,
         "attributions": attr.attributions.cpu(),
-        "elements": list(attr.elements) if not isinstance(attr.elements, list) else attr.elements,
-        "target": int(attr.targets.item()) if attr.targets.numel() == 1 else attr.targets.cpu().tolist(),
+        "elements": list(attr.elements)
+        if not isinstance(attr.elements, list)
+        else attr.elements,
+        "target": int(attr.targets.item())
+        if attr.targets.numel() == 1
+        else attr.targets.cpu().tolist(),
     }
 
 

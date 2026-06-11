@@ -15,6 +15,9 @@ LABEL_NATURE_BY_DATASET = {
     "dair-ai/emotion": "emotion",
     "LabHC/bias_in_bios": "profession",
     "Hate-speech-CNERG/hatexplain": "hate speech detection",
+    "fancyzhx/ag_news": "news topic",
+    "cornell-movie-review-data/rotten_tomatoes": "sentiment",
+    "stanfordnlp/imdb": "sentiment",
 }
 
 
