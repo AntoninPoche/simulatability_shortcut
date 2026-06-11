@@ -10,8 +10,8 @@ and expected_answers has the full list of expected predictions.
 
 Usage examples::
 
-    python scripts/make_prompts_old_consim.py --dataset GE --method seminmf
-    python scripts/make_prompts_old_consim.py --dataset BIOS --method ica --interpretation topk
+    python scripts/make_prompts_old_consim.py GE seminmf
+    python scripts/make_prompts_old_consim.py BIOS ica --interpretation topk
 
 Output: ``data/prompts/{dataset_abbrev}_old_consim.jsonl``
 """
@@ -78,15 +78,13 @@ def parse_args() -> argparse.Namespace:
         description="Generate old ConSim (all-at-once) prompts for comparison.",
     )
     parser.add_argument(
-        "--dataset",
+        "dataset",
         choices=sorted(_ABBREV_TO_DATASET.keys()),
-        required=True,
         help="Dataset abbreviation (e.g. GE, HE, BIOS, E).",
     )
     parser.add_argument(
-        "--method",
+        "method",
         choices=sorted(CONCEPT_METHODS),
-        required=True,
         help="Concept extraction method.",
     )
     parser.add_argument(

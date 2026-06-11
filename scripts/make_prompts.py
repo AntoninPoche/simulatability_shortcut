@@ -5,10 +5,10 @@ iterates over all canonical class subsets for the chosen dataset.
 
 Usage examples::
 
-    python scripts/make_prompts.py --dataset GE --explanation-family concepts --method seminmf
-    python scripts/make_prompts.py --dataset BIOS --explanation-family rationales --method Qwen/Qwen3.5-9B
-    python scripts/make_prompts.py --dataset HE --explanation-family concepts --method ica --interpretation topk
-    python scripts/make_prompts.py --dataset GE --explanation-family attributions --method saliency
+    python scripts/make_prompts.py concepts GE seminmf
+    python scripts/make_prompts.py rationales BIOS qwen3.5-9b
+    python scripts/make_prompts.py concepts HE ica --interpretation topk
+    python scripts/make_prompts.py attributions GE saliency
 
 Output is written to ``data/prompts/{dataset_abbrev}_{explanation_family}.jsonl``.
 Existing keys in the output file are skipped (append-only, resumable).
@@ -110,27 +110,24 @@ def parse_args() -> argparse.Namespace:
         description="Generate ConSim prompt JSONL for simulatability experiments.",
     )
     parser.add_argument(
-        "--dataset",
+        "explanation_family",
+        choices=["concepts", "rationales", "attributions"],
+        help="Explanation family to generate prompts for.",
+    )
+    parser.add_argument(
+        "dataset",
         choices=sorted(_ABBREV_TO_DATASET.keys()),
-        required=True,
         help="Dataset abbreviation (e.g. GE, HE, BIOS, E).",
     )
     parser.add_argument(
-        "--explanation-family",
-        choices=["concepts", "rationales", "attributions"],
-        required=True,
-        help="Explanation family to generate prompts for.",
-    )
-    # Concept-specific arguments
-    parser.add_argument(
-        "--method",
-        required=True,
+        "method",
         help=(
             "Explanation method. For concepts: seminmf, ica, kmeans, pca, svd. "
             f"For rationales: model short name/path ({', '.join(LLM_MODELS.keys())}). "
             f"For attributions: {', '.join(ATTRIBUTION_METHODS.keys())}."
         ),
     )
+    # Concept-specific arguments
     parser.add_argument(
         "--nb-concepts-ratio",
         type=float,

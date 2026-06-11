@@ -6,9 +6,9 @@ cached under ``data/<model>/<split_point>/concept_models/``.
 
 Usage examples::
 
-    python scripts/build_concepts.py --dataset GE --method seminmf
-    python scripts/build_concepts.py --dataset BIOS --method ica
-    python scripts/build_concepts.py --dataset HE --method kmeans --nb-concepts-ratio 2
+    python scripts/build_concepts.py GE seminmf
+    python scripts/build_concepts.py BIOS ica
+    python scripts/build_concepts.py HE kmeans --nb-concepts-ratio 2
 """
 
 from __future__ import annotations
@@ -78,14 +78,13 @@ def parse_args() -> argparse.Namespace:
         description="Build and cache concept-based explanations.",
     )
     parser.add_argument(
-        "--dataset",
+        "dataset",
         choices=sorted(_ABBREV_TO_DATASET.keys()),
         help="Dataset abbreviation (e.g. GE, HE, BIOS, E).",
     )
     parser.add_argument(
-        "--method",
+        "method",
         choices=sorted(METHODS.keys()),
-        required=True,
         help="Concept extraction method.",
     )
     parser.add_argument(
@@ -99,12 +98,6 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(INTERPRETATIONS.keys()),
         default="topk",
         help="Interpretation method for concept labeling (default: topk).",
-    )
-    parser.add_argument(
-        "--interpretation",
-        choices=sorted(INTERPRETATIONS.keys()),
-        default="topk",
-        help="Interpretation method for concept labeling (default: llm).",
     )
     parser.add_argument(
         "--llm-model",

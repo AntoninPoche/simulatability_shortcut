@@ -11,8 +11,8 @@ Handles two modes automatically:
 
 Usage examples::
 
-    python scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_concepts.jsonl
-    python scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_old_consim.jsonl --no-thinking
+    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl --no-thinking
 """
 
 from __future__ import annotations
@@ -40,14 +40,12 @@ def parse_args() -> argparse.Namespace:
         description="Score ConSim prompt groups with a local LLM.",
     )
     parser.add_argument(
-        "--judge-model",
-        required=True,
+        "judge_model",
         help=f"LLM judge model. Short names: {', '.join(LLM_MODELS.keys())}.",
     )
     parser.add_argument(
-        "--prompt-file",
+        "prompt_file",
         type=Path,
-        required=True,
         help="Path to the prompt JSONL file to score.",
     )
     parser.add_argument(

@@ -54,31 +54,31 @@ data/                         # Gitignored artifacts: activations, predictions, 
 
 **Build concept models** (CLI with argparse):
 ```bash
-python scripts/build_concepts.py --dataset GE --method seminmf --interpretation topk
-python scripts/build_concepts.py --dataset BIOS --method ica --nb-concepts-ratio 2
+python scripts/build_concepts.py GE seminmf --interpretation topk
+python scripts/build_concepts.py BIOS ica --nb-concepts-ratio 2
 ```
 
 **Generate prompts — new ConSim** (iterates over all class subsets for the dataset):
 ```bash
-python scripts/make_prompts.py --dataset GE --explanation-family concepts --method seminmf
-python scripts/make_prompts.py --dataset BIOS --explanation-family rationales --method Qwen/Qwen3.5-9B
+python scripts/make_prompts.py concepts GE seminmf
+python scripts/make_prompts.py rationales BIOS qwen3.5-9b
 ```
 
 **Generate prompts — old ConSim** (for new-vs-old comparison, uses same cached samples):
 ```bash
-python scripts/make_prompts_old_consim.py --dataset GE --method seminmf
+python scripts/make_prompts_old_consim.py GE seminmf
 ```
 
 **Score prompts with local LLM**:
 ```bash
-python scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_concepts.jsonl
+python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 ```
 
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 ```bash
-./sequence.sh scripts/build_concepts.py GE,HE,BIOS --method ica,kmeans --interpretation topk
-./sequence.sh scripts/make_prompts.py GE,HE,BIOS --explanation-family concepts --method seminmf,ica,kmeans
-./sequence.sh scripts/local_llm_scoring.py --judge-model Qwen/Qwen3.5-9B --prompt-file data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
+./sequence.sh scripts/build_concepts.py GE,HE,BIOS ica,kmeans --interpretation topk
+./sequence.sh scripts/make_prompts.py concepts GE,HE,BIOS seminmf,ica,kmeans
+./sequence.sh scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
 **Compile paper** (from LaTeX directory):
@@ -89,16 +89,16 @@ pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 ## CLI Arguments Reference
 
 ### `build_concepts.py`
-`--dataset` (GE/HE/BIOS/E), `--method` (seminmf/ica/kmeans/pca/svd), `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--llm-model`, `--device`, `--batch-size`
+Positional: `dataset` (GE/HE/BIOS/E), `method` (seminmf/ica/kmeans/pca/svd). Optional: `--interpretation` (topk/llm), `--nb-concepts-ratio`, `--llm-model`, `--device`, `--batch-size`
 
 ### `make_prompts.py`
-`--dataset`, `--explanation-family` (concepts/rationales), `--method` (concept method or rationale model name), `--nb-concepts-ratio`, `--interpretation`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method, rationale model, or attribution method). Optional: `--nb-concepts-ratio`, `--interpretation`, `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
 
 ### `make_prompts_old_consim.py`
-`--dataset`, `--method`, `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
+Positional: `dataset`, `method`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
 
 ### `local_llm_scoring.py`
-`--judge-model`, `--prompt-file`, `--thinking`/`--no-thinking`, `--max-new-tokens`, `--generation-batch-size`, `--device`
+Positional: `judge_model`, `prompt_file`. Optional: `--thinking`/`--no-thinking`, `--max-new-tokens`, `--generation-batch-size`, `--device`
 
 ## Key Dependencies
 
