@@ -12,6 +12,64 @@ from interpreto.concepts.interpretations import LLMLabels, TopKInputs
 
 from utils.llm_interface import HuggingFaceLLM
 
+# ---------------------------------------------------------------------------
+# CLI name → directory-name prefix mapping.
+# Directory names use the interpreto class name minus the "Concepts" suffix.
+# ---------------------------------------------------------------------------
+CONCEPT_METHOD_NAMES: dict[str, str] = {
+    "seminmf": "SemiNMF",
+    "ica": "ICA",
+    "kmeans": "KMeans",
+    "pca": "PCA",
+    "svd": "SVD",
+}
+
+INTERPRETATION_NAMES: dict[str, str] = {
+    "topk": "TopKInputs",
+    "llm": "LLMLabels",
+}
+
+
+def get_concept_method_class(method_key: str):
+    """Lazy-load the interpreto concept class for the given CLI key."""
+    from interpreto.concepts import (
+        ICAConcepts,
+        KMeansConcepts,
+        PCAConcepts,
+        SemiNMFConcepts,
+        SVDConcepts,
+    )
+
+    classes = {
+        "seminmf": SemiNMFConcepts,
+        "ica": ICAConcepts,
+        "kmeans": KMeansConcepts,
+        "pca": PCAConcepts,
+        "svd": SVDConcepts,
+    }
+    if method_key not in classes:
+        raise ValueError(
+            f"Unknown concept method '{method_key}'. "
+            f"Available: {', '.join(classes.keys())}"
+        )
+    return classes[method_key]
+
+
+def get_interpretation_class(interp_key: str):
+    """Lazy-load the interpreto interpretation class for the given CLI key."""
+    from interpreto.concepts.interpretations import LLMLabels, TopKInputs
+
+    classes = {
+        "llm": LLMLabels,
+        "topk": TopKInputs,
+    }
+    if interp_key not in classes:
+        raise ValueError(
+            f"Unknown interpretation '{interp_key}'. "
+            f"Available: {', '.join(classes.keys())}"
+        )
+    return classes[interp_key]
+
 SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
 Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
 Guidelines:
@@ -529,7 +587,6 @@ def prepare_concept_explanation_resources(
     *,
     dataset_name: str | None,
     model_name: str,
-    split_point: str | int,
     save_root: Path,
     train_inputs: list[str],
     validation_inputs: list[str],
@@ -643,8 +700,8 @@ def compute_and_cache_all_local_importances(
     Stores a list of tensors (one per test sample, squeezed) at
     ``concept_dir / "all_local_importances.pt"``.
 
-    Used by ``build_concepts.py`` so that ``make_prompts.py`` can load
-    pre-computed importances without needing the task model or interpreto.
+    Pre-computes importances so that ``make_prompts.py`` can load them
+    without needing the task model or interpreto.
     """
     cache_path = concept_dir / "all_local_importances.pt"
     if cache_path.exists():
@@ -678,8 +735,7 @@ def load_local_importances(
     cache_path = concept_dir / "all_local_importances.pt"
     if not cache_path.exists():
         raise FileNotFoundError(
-            f"Pre-computed local importances not found at {cache_path}. "
-            f"Run build_concepts.py first."
+            f"Pre-computed local importances not found at {cache_path}."
         )
     all_importances = torch.load(cache_path, map_location="cpu")
     # Select only the learning-phase samples.
@@ -728,8 +784,7 @@ def load_concept_explanation_resources(
     concept_model_path = concept_dir / "concept_model.pt"
     if not concept_model_path.exists():
         raise FileNotFoundError(
-            f"Concept model not found at {concept_model_path}. "
-            f"Run build_concepts.py first."
+            f"Concept model not found at {concept_model_path}."
         )
 
     # Load interpretations.
@@ -742,15 +797,13 @@ def load_concept_explanation_resources(
                 break
         else:
             raise FileNotFoundError(
-                f"TopK interpretations not found in {concept_dir}. "
-                f"Run build_concepts.py first."
+                f"TopK interpretations not found in {concept_dir}."
             )
     elif interpretation_name == "LLMLabels":
         interp_path = concept_dir / "llm_interpretations.json"
         if not interp_path.exists():
             raise FileNotFoundError(
-                f"LLM interpretations not found at {interp_path}. "
-                f"Run build_concepts.py first."
+                f"LLM interpretations not found at {interp_path}."
             )
     else:
         raise ValueError(f"Unknown interpretation: {interpretation_name}")
@@ -763,8 +816,7 @@ def load_concept_explanation_resources(
     importances_path = concept_dir / "importances.pt"
     if not importances_path.exists():
         raise FileNotFoundError(
-            f"Global importances not found at {importances_path}. "
-            f"Run build_concepts.py first."
+            f"Global importances not found at {importances_path}."
         )
     global_importances = torch.load(importances_path, map_location=device)
     # Handle both pre-reduced (mean already applied) and raw stacked tensors.
@@ -779,4 +831,129 @@ def load_concept_explanation_resources(
         interpretation_name=interpretation_name,
         nb_concepts=nb_concepts,
         concept_dir=concept_dir,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full build pipeline for make_prompts.py fallback.
+# ---------------------------------------------------------------------------
+
+
+def build_concept_resources(
+    *,
+    method_key: str,
+    interpretation_key: str,
+    dataset_name: str,
+    model_name: str,
+    save_root: Path,
+    train_inputs: list[str],
+    validation_inputs: list[str],
+    test_inputs: list[str],
+    classes: list[str],
+    nb_concepts_ratio: float,
+    llm_model: str | None = None,
+    device: str = "cuda",
+    batch_size: int = 64,
+) -> None:
+    """Build all concept artifacts (model, interpretations, importances).
+
+    This wraps the full pipeline from ``prepare_concept_explanation_resources``
+    and ``compute_and_cache_all_local_importances``. Called by ``make_prompts.py``
+    when cached artifacts are missing.
+
+    Releases GPU memory after completion.
+    """
+    import gc
+
+    method_class = get_concept_method_class(method_key)
+    interpretation_class = get_interpretation_class(interpretation_key)
+
+    global_explanation = prepare_concept_explanation_resources(
+        dataset_name=dataset_name,
+        model_name=model_name,
+        save_root=save_root,
+        train_inputs=train_inputs,
+        validation_inputs=validation_inputs,
+        classes=classes,
+        method=method_class,
+        nb_concepts_ratio=nb_concepts_ratio,
+        interpretation=interpretation_class,
+        llm_model=llm_model,
+        device=device,
+        batch_size=batch_size,
+    )
+
+    compute_and_cache_all_local_importances(
+        concept_explainer=global_explanation.concept_explainer,
+        test_inputs=test_inputs,
+        concept_dir=global_explanation.concept_dir,
+        batch_size=batch_size,
+    )
+
+    # Release GPU memory — the task model and concept explainer are no longer needed.
+    del global_explanation
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def load_or_build_concept_resources(
+    args,
+    *,
+    dataset_name: str,
+    model_name: str,
+    save_root: Path,
+    train_inputs: list[str],
+    validation_inputs: list[str],
+    test_inputs: list[str],
+    classes: list[str],
+) -> GlobalConceptExplanation:
+    """Load concept resources from cache, building them if missing.
+
+    Extracts concept-specific parameters from ``args``:
+    method, interpretation, nb_concepts_ratio, llm_model, device, batch_size.
+    """
+    nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+    interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+    method_dir_name = CONCEPT_METHOD_NAMES[args.method]
+
+    try:
+        resources = load_concept_explanation_resources(
+            save_root=save_root,
+            method_name=method_dir_name,
+            nb_concepts=nb_concepts,
+            interpretation_name=interpretation_name,
+            classes=classes,
+        )
+        # Also verify local importances exist (not checked by load above).
+        if not (resources.concept_dir / "all_local_importances.pt").exists():
+            raise FileNotFoundError("Local importances missing.")
+        return resources
+    except FileNotFoundError:
+        pass
+
+    # Artifacts not cached — build them now.
+    print(f"  Concept artifacts missing, building for {args.method}...")
+    llm_model = args.llm_model if args.interpretation == "llm" else None
+    build_concept_resources(
+        method_key=args.method,
+        interpretation_key=args.interpretation,
+        dataset_name=dataset_name,
+        model_name=model_name,
+        save_root=save_root,
+        train_inputs=train_inputs,
+        validation_inputs=validation_inputs,
+        test_inputs=test_inputs,
+        classes=classes,
+        nb_concepts_ratio=args.nb_concepts_ratio,
+        llm_model=llm_model,
+        device=args.device,
+        batch_size=args.batch_size,
+    )
+    return load_concept_explanation_resources(
+        save_root=save_root,
+        method_name=method_dir_name,
+        nb_concepts=nb_concepts,
+        interpretation_name=interpretation_name,
+        classes=classes,
     )

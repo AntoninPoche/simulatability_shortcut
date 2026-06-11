@@ -3,10 +3,15 @@
 Supports three explanation families (concepts, rationales, and attributions) and
 iterates over all canonical class subsets for the chosen dataset.
 
+Concept artifacts (model, interpretations, importances) are built automatically
+if missing from cache. The script exits early if all expected prompt entries
+already exist in the output file.
+
 Usage examples::
 
     python scripts/make_prompts.py concepts GE seminmf
-    python scripts/make_prompts.py rationales BIOS qwen3.5-9b
+    python scripts/make_prompts.py rationales BIOS
+    python scripts/make_prompts.py rationales BIOS --llm-model qwen3.5-9b
     python scripts/make_prompts.py concepts HE ica --interpretation topk
     python scripts/make_prompts.py attributions GE saliency
 
@@ -30,7 +35,9 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.concepts import (
-    load_concept_explanation_resources,
+    CONCEPT_METHOD_NAMES,
+    INTERPRETATION_NAMES,
+    load_or_build_concept_resources,
     load_local_importances,
 )
 from utils.consim import ConSim, PromptTypes
@@ -40,7 +47,6 @@ from utils.data import (
     DATASET_CLASSES_SUBSETS,
     LLM_MODELS,
     MODELS_DATASETS,
-    MODEL_SPLIT_POINTS,
     get_save_root,
     iter_jsonl,
     load_dataset_splits,
@@ -74,14 +80,8 @@ _ABBREV_TO_DATASET: dict[str, str] = {
 }
 _DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
 
-# Concept extraction method names (for --method validation and path construction).
-CONCEPT_METHODS = {"seminmf", "ica", "kmeans", "pca", "svd"}
-
-# Interpretation method names → interpreto class names (for cache path lookup).
-INTERPRETATION_NAMES = {
-    "llm": "LLMLabels",
-    "topk": "TopKInputs",
-}
+# Concept extraction method names (for --method validation).
+CONCEPT_METHODS = set(CONCEPT_METHOD_NAMES.keys())
 
 # Prompt types for each explanation family.
 CONCEPT_PROMPT_TYPES = {
@@ -121,9 +121,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "method",
+        nargs="?",
+        default=None,
         help=(
-            "Explanation method. For concepts: seminmf, ica, kmeans, pca, svd. "
-            f"For rationales: model short name/path ({', '.join(LLM_MODELS.keys())}). "
+            "Explanation method (not used for rationales). "
+            "For concepts: seminmf, ica, kmeans, pca, svd. "
             f"For attributions: {', '.join(ATTRIBUTION_METHODS.keys())}."
         ),
     )
@@ -139,6 +141,14 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(INTERPRETATION_NAMES.keys()),
         default="topk",
         help="Interpretation method for concept labeling (default: topk).",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="llama3.2-3b",
+        help=(
+            f"LLM model for rationale generation and concept LLM interpretation "
+            f"(default: llama3.2-3b). Short names: {', '.join(LLM_MODELS.keys())}."
+        ),
     )
     # Rationale-specific arguments
     parser.add_argument(
@@ -239,13 +249,14 @@ def generate_prompts_for_subset(
     attribution_by_seed = None
 
     if explanation_family == "concepts":
-        nb_concepts = int(len(classes) * args.nb_concepts_ratio)
-        interpretation_name = INTERPRETATION_NAMES[args.interpretation]
-        concept_resources = load_concept_explanation_resources(
+        concept_resources = load_or_build_concept_resources(
+            args,
+            dataset_name=dataset_name,
+            model_name=model_name,
             save_root=save_root,
-            method_name=args.method,
-            nb_concepts=nb_concepts,
-            interpretation_name=interpretation_name,
+            train_inputs=args.train_inputs,
+            validation_inputs=args.validation_inputs,
+            test_inputs=test_inputs,
             classes=classes,
         )
     elif explanation_family == "rationales":
@@ -257,7 +268,7 @@ def generate_prompts_for_subset(
             {index for indices in seed_indices.values() for index in indices}
         )
         rationales = load_or_generate_rationales(
-            model_name=args.method,
+            model_name=args.llm_model,
             dataset_name=dataset_name,
             inputs=[test_inputs[index] for index in required_test_indices],
             labels=test_labels[required_test_indices],
@@ -344,7 +355,7 @@ def generate_prompts_for_subset(
                         "local_importances": local_explanation.local_importances,
                     }
                 elif explanation_family == "rationales":
-                    method_name = args.method if not is_baseline else "baseline"
+                    method_name = args.llm_model if not is_baseline else "baseline"
                     nb_concepts = None
                     interpretation_name = None
                     construct_prompt_kwargs = {
@@ -401,22 +412,88 @@ def generate_prompts_for_subset(
     return new_prompts
 
 
+def compute_expected_keys(
+    *,
+    explanation_family: str,
+    dataset_abbrev: str,
+    model_abbrev: str,
+    method_name: str,
+    classes_subsets: list[list[int]],
+    seeds: list[int],
+    nb_concepts: int | None,
+    interpretation_name: str | None,
+    prompt_types: set,
+    specification: str,
+) -> set[str]:
+    """Enumerate all keys this invocation would produce (for early-exit check)."""
+    expected = set()
+    for classes_subset in classes_subsets:
+        for seed in seeds:
+            for prompt_type in prompt_types:
+                for anonym in [True, False]:
+                    is_baseline = "baseline" in prompt_type.name
+                    pt_name = prompt_type.name.split("_")[0]
+                    if anonym:
+                        pt_name = "A" + pt_name
+                    key = str((
+                        dataset_abbrev,
+                        model_abbrev,
+                        str(classes_subset),
+                        seed,
+                        "baseline" if is_baseline else method_name,
+                        nb_concepts,
+                        interpretation_name,
+                        pt_name,
+                        specification,
+                    ))
+                    expected.add(key)
+    return expected
+
+
 def main() -> None:
     args = parse_args()
+
+    # Validate method argument (required for concepts and attributions only).
+    if args.method is None and args.explanation_family not in ("rationales",):
+        print("Error: 'method' is required for concepts and attributions.")
+        sys.exit(1)
+
     seeds = parse_seeds(args.seeds)
 
     # Resolve dataset abbreviation → full names.
     dataset_name = _ABBREV_TO_DATASET[args.dataset]
     model_name = _DATASET_TO_MODEL[dataset_name]
-    split_point = MODEL_SPLIT_POINTS[model_name]
-    save_root = get_save_root(model_name, split_point)
+    save_root = get_save_root(model_name)
     save_root.mkdir(parents=True, exist_ok=True)
 
-    # Resolve short LLM model names for rationale generation.
-    if args.explanation_family == "rationales":
-        args.method = resolve_llm_model(args.method)
+    # Resolve LLM model name (used for rationales and concept LLM interpretation).
+    args.llm_model = resolve_llm_model(args.llm_model)
 
-    # Determine output path.
+    # --- Early-exit check: compute all expected keys before loading data. ---
+    dataset_abbrev = args.dataset
+    model_abbrev = ABBREVIATIONS["models"][model_name]
+    classes = DATASET_CLASSES_NAMES[dataset_name]
+    all_subsets = DATASET_CLASSES_SUBSETS[dataset_name]
+
+    if args.explanation_family == "concepts":
+        prompt_types = CONCEPT_PROMPT_TYPES
+        specification = "new_consim"
+        nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+        interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+        method_for_key = CONCEPT_METHOD_NAMES[args.method]
+    elif args.explanation_family == "rationales":
+        prompt_types = RATIONALE_PROMPT_TYPES
+        specification = "rationales"
+        nb_concepts = None
+        interpretation_name = None
+        method_for_key = args.llm_model
+    else:
+        prompt_types = ATTRIBUTION_PROMPT_TYPES
+        specification = "attributions"
+        nb_concepts = None
+        interpretation_name = None
+        method_for_key = args.method
+
     output_path = Path(f"data/prompts/{args.dataset}_{args.explanation_family}.jsonl")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -428,19 +505,41 @@ def main() -> None:
     else:
         existing_keys = set()
 
-    # Load dataset (only test split needed for prompt generation).
+    expected_keys = compute_expected_keys(
+        explanation_family=args.explanation_family,
+        dataset_abbrev=dataset_abbrev,
+        model_abbrev=model_abbrev,
+        method_name=method_for_key,
+        classes_subsets=all_subsets,
+        seeds=seeds,
+        nb_concepts=nb_concepts,
+        interpretation_name=interpretation_name,
+        prompt_types=prompt_types,
+        specification=specification,
+    )
+
+    if expected_keys <= existing_keys:
+        print(
+            f"All {len(expected_keys)} entries already exist in {output_path}. "
+            f"Skipping."
+        )
+        sys.exit(0)
+
+    # --- Load data (only after early-exit check passes). ---
     print(f"Dataset:            {dataset_name} ({args.dataset})")
     print(f"Model:              {model_name}")
     print(f"Explanation family: {args.explanation_family}")
-    print(f"Method:             {args.method}")
+    if args.explanation_family == "rationales":
+        print(f"LLM model:          {args.llm_model}")
+    else:
+        print(f"Method:             {args.method}")
     print(f"Seeds:              {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
     print(f"Output:             {output_path}")
     print()
 
-    _train_inputs, _validation_inputs, test_inputs, test_labels = load_dataset_splits(
+    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
         dataset_name
     )
-    classes = DATASET_CLASSES_NAMES[dataset_name]
 
     # Compute predictions once.
     test_predictions = load_or_compute_predictions(
@@ -451,8 +550,11 @@ def main() -> None:
         batch_size=args.batch_size,
     )
 
+    # Store train/validation on args for the concept-building fallback path.
+    args.train_inputs = train_inputs
+    args.validation_inputs = validation_inputs
+
     # Iterate over all canonical class subsets for this dataset.
-    all_subsets = DATASET_CLASSES_SUBSETS[dataset_name]
     total_new = 0
 
     for classes_subset in all_subsets:

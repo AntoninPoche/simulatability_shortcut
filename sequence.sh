@@ -2,15 +2,15 @@
 # Run a python script for every combination from comma-separated argument values.
 #
 # Usage:
-#   ./sequence.sh scripts/build_concepts.py GE,HE,BIOS ica,kmeans --interpretation topk
+#   ./sequence.sh scripts/make_prompts.py concepts GE,HE,BIOS ica,kmeans --interpretation topk
 #
 # The above expands to 6 sequential runs (cartesian product of datasets × methods):
-#   python scripts/build_concepts.py GE    ica    --interpretation topk
-#   python scripts/build_concepts.py GE    kmeans --interpretation topk
-#   python scripts/build_concepts.py HE    ica    --interpretation topk
-#   python scripts/build_concepts.py HE    kmeans --interpretation topk
-#   python scripts/build_concepts.py BIOS  ica    --interpretation topk
-#   python scripts/build_concepts.py BIOS  kmeans --interpretation topk
+#   python scripts/make_prompts.py concepts GE    ica    --interpretation topk
+#   python scripts/make_prompts.py concepts GE    kmeans --interpretation topk
+#   python scripts/make_prompts.py concepts HE    ica    --interpretation topk
+#   python scripts/make_prompts.py concepts HE    kmeans --interpretation topk
+#   python scripts/make_prompts.py concepts BIOS  ica    --interpretation topk
+#   python scripts/make_prompts.py concepts BIOS  kmeans --interpretation topk
 #
 # Flags (store_true arguments like --thinking) are forwarded as-is.
 
