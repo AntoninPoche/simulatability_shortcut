@@ -233,7 +233,15 @@ def load_dataset_splits(dataset: str):
             :5000
         ]
         test_inputs = list(test_split["hard_text"])
-        test_labels = list(test_split[DATASET_LABEL_COLUMNS.get(dataset, "label")])
+        # The dataset's "profession" column uses alphabetical class ordering,
+        # but the model predicts in DATASET_CLASSES_NAMES order. Remap labels
+        # so that label integers match model prediction indices.
+        classes_names = DATASET_CLASSES_NAMES[dataset]
+        labels_mapping = sorted(
+            range(len(classes_names)), key=lambda x: classes_names[x]
+        )
+        raw_labels = list(test_split[DATASET_LABEL_COLUMNS.get(dataset, "label")])
+        test_labels = [labels_mapping[l] for l in raw_labels]
     elif dataset == "Hate-speech-CNERG/hatexplain":
         train_inputs = [" ".join(x["post_tokens"]) for x in dataset_dict["train"]]  # type: ignore
         validation_inputs = [
