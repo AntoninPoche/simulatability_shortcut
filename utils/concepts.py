@@ -22,6 +22,9 @@ CONCEPT_METHOD_NAMES: dict[str, str] = {
     "kmeans": "KMeans",
     "pca": "PCA",
     "svd": "SVD",
+    "batchtopk_sae": "BatchTopKSAE",
+    "vanilla_sae": "VanillaSAE",
+    "neurons": "NeuronsAs",
 }
 
 INTERPRETATION_NAMES: dict[str, str] = {
@@ -33,11 +36,14 @@ INTERPRETATION_NAMES: dict[str, str] = {
 def get_concept_method_class(method_key: str):
     """Lazy-load the interpreto concept class for the given CLI key."""
     from interpreto.concepts import (
+        BatchTopKSAEConcepts,
         ICAConcepts,
         KMeansConcepts,
+        NeuronsAsConcepts,
         PCAConcepts,
         SemiNMFConcepts,
         SVDConcepts,
+        VanillaSAEConcepts,
     )
 
     classes = {
@@ -46,6 +52,9 @@ def get_concept_method_class(method_key: str):
         "kmeans": KMeansConcepts,
         "pca": PCAConcepts,
         "svd": SVDConcepts,
+        "batchtopk_sae": BatchTopKSAEConcepts,
+        "vanilla_sae": VanillaSAEConcepts,
+        "neurons": NeuronsAsConcepts,
     }
     if method_key not in classes:
         raise ValueError(
@@ -69,6 +78,7 @@ def get_interpretation_class(interp_key: str):
             f"Available: {', '.join(classes.keys())}"
         )
     return classes[interp_key]
+
 
 SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
 Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
@@ -217,7 +227,7 @@ class GlobalConceptExplanation(NamedTuple):
     global_importances: torch.Tensor
     method_name: str
     interpretation_name: str
-    nb_concepts: int
+    nb_concepts: int | None
     concept_dir: Path
 
 
@@ -401,6 +411,8 @@ def load_concept_model(concept_explainer, model_path: Path, device):
         concept_explainer.concept_model.load_state_dict(
             torch.load(str(model_path), map_location=device, weights_only=True)
         )
+        if hasattr(concept_explainer.concept_model, "training"):
+            concept_explainer.concept_model.training = False
         return concept_explainer
     raise NotImplementedError(
         f"Loading not implemented for {type(concept_explainer).__name__}"
@@ -422,15 +434,34 @@ def save_concept_model(concept_explainer, model_path: Path) -> None:
 def load_or_fit_concept_model(
     splitter,
     concept_dir: Path,
-    activations: torch.Tensor,
+    activations: torch.Tensor | None,
     method,
-    nb_concepts: int,
+    nb_concepts: int | None,
     device,
+    batch_size: int,
 ):
+    method_name = name_for(method)
+    concept_init_kwargs: dict[str, Any] = {}
+    if method_name == "BatchTopKSAEConcepts":
+        if nb_concepts is None:
+            raise ValueError("BatchTopKSAEConcepts requires nb_concepts.")
+        # Interpreto's installed BatchTopK SAE keeps a top-k across the whole batch.
+        # Newer APIs may expose this as batch_top_k; this environment falls back to top_k.
+        concept_init_kwargs["top_k"] = max(1, int(nb_concepts / 3)) * batch_size
+
+    if method_name == "NeuronsAsConcepts":
+        concept_explainer = method(splitter)
+        concept_model_path = concept_dir / "concept_model.pt"
+        if concept_model_path.exists():
+            return load_concept_model(concept_explainer, concept_model_path, device)
+        save_concept_model(concept_explainer, concept_model_path)
+        return concept_explainer
+
     concept_explainer = method(
         splitter,
         nb_concepts=nb_concepts,
         device=device,
+        **concept_init_kwargs,
     )
 
     concept_model_path = concept_dir / "concept_model.pt"
@@ -439,7 +470,21 @@ def load_or_fit_concept_model(
             concept_explainer, concept_model_path, device
         )
     else:
-        concept_explainer.fit(activations)
+        if activations is None:
+            raise ValueError(f"Activations are required to fit {method_name}.")
+        if "SAE" in method_name:
+            from interpreto.concepts.methods.overcomplete import (
+                DeadNeuronsReanimationLoss,
+            )
+
+            concept_explainer.fit(
+                activations,
+                criterion=DeadNeuronsReanimationLoss,
+                batch_size=batch_size,
+                device=device,
+            )
+        else:
+            concept_explainer.fit(activations)
         save_concept_model(concept_explainer, concept_model_path)
     return concept_explainer
 
@@ -549,7 +594,10 @@ def load_or_compute_interpretations(
             inputs=validation_inputs,
             concepts_indices="all",
         )
-        interpretations = {k: list(v.keys()) for k, v in interpretations.items()}
+        interpretations = {
+            k: list(v.keys()) if v is not None else []
+            for k, v in interpretations.items()
+        }
         _save_json_with_metadata(
             prompt_path,
             interpretations,
@@ -580,7 +628,11 @@ def load_or_compute_global_importances(
         )
         torch.save(gradients, importances_path)
 
-    return torch.stack(gradients).squeeze().mean(dim=0)
+    if isinstance(gradients, list):
+        gradients = torch.stack(gradients)
+    if gradients.dim() > 2:
+        gradients = gradients.squeeze().mean(dim=0)
+    return gradients
 
 
 def prepare_concept_explanation_resources(
@@ -598,19 +650,19 @@ def prepare_concept_explanation_resources(
     device: str,
     batch_size: int,
 ) -> GlobalConceptExplanation:
-    from interpreto import SplitterForClassification
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-    from utils.data import load_or_compute_activations
+    from interpreto import SplitSequenceClassification as SplitterForClassification
+    from transformers import AutoModelForSequenceClassification
+    from utils.data import load_hf_tokenizer, load_or_compute_activations
 
     method_name = name_for(method)[:-8]  # remove "Concepts" suffix
     interpretation_name = name_for(interpretation)
-    nb_concepts = int(len(classes) * nb_concepts_ratio)
+    nb_concepts = None if method_name == "NeuronsAs" else int(len(classes) * nb_concepts_ratio)
     concept_dir = save_root / "concept_models" / f"{method_name}_nc{nb_concepts}"
     concept_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep the task model loading local to the concept-specific preparation step.
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = load_hf_tokenizer(model_name)
     splitter = SplitterForClassification(
         model,
         tokenizer=tokenizer,
@@ -618,14 +670,16 @@ def prepare_concept_explanation_resources(
         batch_size=batch_size,
     )
 
-    activations = load_or_compute_activations(
-        splitter=splitter,
-        train_inputs=train_inputs,
-        activations_path=save_root / "activations.pt",
-        device=device,
-    )
-    if isinstance(activations, dict):
-        activations = splitter.get_split_activations(activations)
+    activations = None
+    if method_name != "NeuronsAs":
+        activations = load_or_compute_activations(
+            splitter=splitter,
+            train_inputs=train_inputs,
+            activations_path=save_root / "activations.pt",
+            device=device,
+        )
+        if isinstance(activations, dict):
+            activations = splitter.get_split_activations(activations)
     concept_explainer = load_or_fit_concept_model(
         splitter=splitter,
         concept_dir=concept_dir,
@@ -633,6 +687,7 @@ def prepare_concept_explanation_resources(
         method=method,
         nb_concepts=nb_concepts,
         device=device,
+        batch_size=batch_size,
     )
     concepts_interpretation = load_or_compute_interpretations(
         concept_explainer=concept_explainer,
@@ -754,7 +809,7 @@ def get_concept_dir(
     *,
     save_root: Path,
     method_name: str,
-    nb_concepts: int,
+    nb_concepts: int | None,
 ) -> Path:
     """Reconstruct the concept_dir path from parameters."""
     return save_root / "concept_models" / f"{method_name}_nc{nb_concepts}"
@@ -764,7 +819,7 @@ def load_concept_explanation_resources(
     *,
     save_root: Path,
     method_name: str,
-    nb_concepts: int,
+    nb_concepts: int | None,
     interpretation_name: str,
     classes: list[str],
     device: str = "cpu",
@@ -783,9 +838,7 @@ def load_concept_explanation_resources(
     # Check concept model exists (we don't load it — not needed for prompts).
     concept_model_path = concept_dir / "concept_model.pt"
     if not concept_model_path.exists():
-        raise FileNotFoundError(
-            f"Concept model not found at {concept_model_path}."
-        )
+        raise FileNotFoundError(f"Concept model not found at {concept_model_path}.")
 
     # Load interpretations.
     # Determine interpretation filename from config.
@@ -796,15 +849,11 @@ def load_concept_explanation_resources(
             if interp_path.exists():
                 break
         else:
-            raise FileNotFoundError(
-                f"TopK interpretations not found in {concept_dir}."
-            )
+            raise FileNotFoundError(f"TopK interpretations not found in {concept_dir}.")
     elif interpretation_name == "LLMLabels":
         interp_path = concept_dir / "llm_interpretations.json"
         if not interp_path.exists():
-            raise FileNotFoundError(
-                f"LLM interpretations not found at {interp_path}."
-            )
+            raise FileNotFoundError(f"LLM interpretations not found at {interp_path}.")
     else:
         raise ValueError(f"Unknown interpretation: {interpretation_name}")
 
@@ -815,10 +864,10 @@ def load_concept_explanation_resources(
     # Load global importances.
     importances_path = concept_dir / "importances.pt"
     if not importances_path.exists():
-        raise FileNotFoundError(
-            f"Global importances not found at {importances_path}."
-        )
+        raise FileNotFoundError(f"Global importances not found at {importances_path}.")
     global_importances = torch.load(importances_path, map_location=device)
+    if isinstance(global_importances, list):
+        global_importances = torch.stack(global_importances)
     # Handle both pre-reduced (mean already applied) and raw stacked tensors.
     if global_importances.dim() > 2:
         global_importances = global_importances.squeeze().mean(dim=0)
@@ -914,6 +963,8 @@ def load_or_build_concept_resources(
     method, interpretation, nb_concepts_ratio, llm_model, device, batch_size.
     """
     nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+    if args.method == "neurons":
+        nb_concepts = None
     interpretation_name = INTERPRETATION_NAMES[args.interpretation]
     method_dir_name = CONCEPT_METHOD_NAMES[args.method]
 

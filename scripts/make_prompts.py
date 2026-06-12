@@ -125,7 +125,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Explanation method (not used for rationales). "
-            "For concepts: seminmf, ica, kmeans, pca, svd. "
+            f"For concepts: {', '.join(sorted(CONCEPT_METHODS))}. "
             f"For attributions: {', '.join(ATTRIBUTION_METHODS.keys())}."
         ),
     )
@@ -195,6 +195,10 @@ def parse_seeds(seeds_str: str) -> list[int]:
         start, end = seeds_str.split("-")
         return list(range(int(start), int(end) + 1))
     return [int(s) for s in seeds_str.split(",")]
+
+
+def has_non_finite_importances(tensors: list[torch.Tensor]) -> bool:
+    return any(not torch.isfinite(tensor).all().item() for tensor in tensors)
 
 
 def generate_prompts_for_subset(
@@ -324,12 +328,19 @@ def generate_prompts_for_subset(
             local_labels = torch.tensor(local_elements["labels"])
             local_predictions = torch.tensor(local_elements["predictions"])
             local_indices = list(local_elements["indices"])
+            concept_importances_corrupted = False
 
             if explanation_family == "concepts":
                 local_explanation = load_local_importances(
                     concept_dir=concept_resources.concept_dir,
                     sample_indices=local_indices,
                     nb_learning_samples=nb_learning_samples,
+                )
+                concept_importances_corrupted = has_non_finite_importances(
+                    [
+                        concept_resources.global_importances,
+                        *local_explanation.local_importances,
+                    ]
                 )
             elif explanation_family == "rationales":
                 local_rationales = rationale_by_seed[seed]
@@ -385,6 +396,21 @@ def generate_prompts_for_subset(
                 if str_key in existing_keys:
                     continue
 
+                if explanation_family == "concepts" and concept_importances_corrupted:
+                    with open(output_path, "a") as handle:
+                        json.dump(
+                            {
+                                "key": str_key,
+                                "corrupted": True,
+                                "corruption_reason": "non_finite_concept_importances",
+                            },
+                            handle,
+                        )
+                        handle.write("\n")
+                    existing_keys.add(str_key)
+                    new_prompts += 1
+                    continue
+
                 system_prompt, user_prompts, expected_answers = (
                     simulatability_metric.construct_prompt(
                         setting=setting,
@@ -435,17 +461,19 @@ def compute_expected_keys(
                     pt_name = prompt_type.name.split("_")[0]
                     if anonym:
                         pt_name = "A" + pt_name
-                    key = str((
-                        dataset_abbrev,
-                        model_abbrev,
-                        str(classes_subset),
-                        seed,
-                        "baseline" if is_baseline else method_name,
-                        nb_concepts,
-                        interpretation_name,
-                        pt_name,
-                        specification,
-                    ))
+                    key = str(
+                        (
+                            dataset_abbrev,
+                            model_abbrev,
+                            str(classes_subset),
+                            seed,
+                            "baseline" if is_baseline else method_name,
+                            nb_concepts,
+                            interpretation_name,
+                            pt_name,
+                            specification,
+                        )
+                    )
                     expected.add(key)
     return expected
 
@@ -478,7 +506,7 @@ def main() -> None:
     if args.explanation_family == "concepts":
         prompt_types = CONCEPT_PROMPT_TYPES
         specification = "new_consim"
-        nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+        nb_concepts = None if args.method == "neurons" else int(len(classes) * args.nb_concepts_ratio)
         interpretation_name = INTERPRETATION_NAMES[args.interpretation]
         method_for_key = CONCEPT_METHOD_NAMES[args.method]
     elif args.explanation_family == "rationales":

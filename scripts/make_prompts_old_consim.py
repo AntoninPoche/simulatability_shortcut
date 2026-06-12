@@ -30,6 +30,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.concepts import (
+    CONCEPT_METHOD_NAMES,
+    INTERPRETATION_NAMES,
     load_concept_explanation_resources,
     load_local_importances,
 )
@@ -54,13 +56,7 @@ _ABBREV_TO_DATASET: dict[str, str] = {
 _DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
 
 # Concept extraction method names (for --method validation).
-CONCEPT_METHODS = {"seminmf", "ica", "kmeans", "pca", "svd"}
-
-# Interpretation method names → interpreto class names (for cache path lookup).
-INTERPRETATION_NAMES = {
-    "llm": "LLMLabels",
-    "topk": "TopKInputs",
-}
+CONCEPT_METHODS = set(CONCEPT_METHOD_NAMES.keys())
 
 # Old ConSim prompt types (subset relevant for comparison).
 OLD_PROMPT_TYPES = {
@@ -130,6 +126,10 @@ def parse_seeds(seeds_str: str) -> list[int]:
     return [int(s) for s in seeds_str.split(",")]
 
 
+def has_non_finite_importances(tensors: list[torch.Tensor]) -> bool:
+    return any(not torch.isfinite(tensor).all().item() for tensor in tensors)
+
+
 def build_old_consim_global_importances(
     global_importances: torch.Tensor,
     classes: list[str],
@@ -195,11 +195,12 @@ def main() -> None:
     )
 
     # Load pre-built concept resources (load-only, no interpreto needed).
-    nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+    nb_concepts = None if args.method == "neurons" else int(len(classes) * args.nb_concepts_ratio)
     interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+    method_dir_name = CONCEPT_METHOD_NAMES[args.method]
     concept_resources = load_concept_explanation_resources(
         save_root=save_root,
-        method_name=args.method,
+        method_name=method_dir_name,
         nb_concepts=nb_concepts,
         interpretation_name=interpretation_name,
         classes=classes,
@@ -225,12 +226,17 @@ def main() -> None:
             nb_samples=args.nb_samples,
         )
 
-        # Convert global importances to old format.
-        old_global_importances = build_old_consim_global_importances(
-            concept_resources.global_importances,
-            classes,
-            classes_subset,
+        global_importances_corrupted = has_non_finite_importances(
+            [concept_resources.global_importances]
         )
+        old_global_importances = None
+        if not global_importances_corrupted:
+            # Convert global importances to old format.
+            old_global_importances = build_old_consim_global_importances(
+                concept_resources.global_importances,
+                classes,
+                classes_subset,
+            )
 
         with tqdm(
             total=len(seeds) * len(OLD_PROMPT_TYPES) * 2,
@@ -251,16 +257,22 @@ def main() -> None:
                     sample_indices=local_indices,
                     nb_learning_samples=nb_learning_samples,
                 )
-                # Old ConSim expects shape (nb_lp_samples, nb_concepts):
-                # importance of each concept for the PREDICTED class of each sample.
-                old_local_importances = torch.stack(
-                    [
-                        local_explanation.local_importances[i][
-                            int(local_predictions[i].item())
-                        ]
-                        for i in range(nb_learning_samples)
-                    ]
+                concept_importances_corrupted = (
+                    global_importances_corrupted
+                    or has_non_finite_importances(local_explanation.local_importances)
                 )
+                old_local_importances = None
+                if not concept_importances_corrupted:
+                    # Old ConSim expects shape (nb_lp_samples, nb_concepts):
+                    # importance of each concept for the PREDICTED class of each sample.
+                    old_local_importances = torch.stack(
+                        [
+                            local_explanation.local_importances[i][
+                                int(local_predictions[i].item())
+                            ]
+                            for i in range(nb_learning_samples)
+                        ]
+                    )
 
                 for prompt_type in OLD_PROMPT_TYPES:
                     for anonym in [True, False]:
@@ -289,6 +301,21 @@ def main() -> None:
                             )
                         )
                         if str_key in existing_keys:
+                            continue
+
+                        if concept_importances_corrupted:
+                            with open(output_path, "a") as handle:
+                                json.dump(
+                                    {
+                                        "key": str_key,
+                                        "corrupted": True,
+                                        "corruption_reason": "non_finite_concept_importances",
+                                    },
+                                    handle,
+                                )
+                                handle.write("\n")
+                            existing_keys.add(str_key)
+                            total_new += 1
                             continue
 
                         # Use old ConSim's _generate_prompt (static method).

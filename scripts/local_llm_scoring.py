@@ -256,9 +256,15 @@ def main() -> None:
     score_path = get_score_path(args.judge_model, thinking)
     treated_keys = load_treated_keys(score_path)
 
-    # Determine which keys need scoring.
-    requested_keys = {pg["key"] for pg in iter_jsonl(prompt_path)}
+    # Determine which keys need scoring. Corrupted prompt groups are explicit
+    # run markers and must never be forwarded to the judge.
+    prompt_groups = list(iter_jsonl(prompt_path))
+    corrupted_keys = {pg["key"] for pg in prompt_groups if pg.get("corrupted")}
+    requested_keys = {pg["key"] for pg in prompt_groups if not pg.get("corrupted")}
     missing_keys = requested_keys - treated_keys
+
+    if corrupted_keys:
+        print(f"Skipping {len(corrupted_keys)} corrupted prompt keys.")
 
     if not missing_keys:
         print(f"Nothing to score. All {len(requested_keys)} keys already in {score_path}.")
@@ -294,9 +300,13 @@ def main() -> None:
     with open(score_path, "a", newline="") as handle:
         writer = csv.writer(handle)
 
-        for prompt_group in tqdm(iter_jsonl(prompt_path), total=len(missing_keys)):
-            if prompt_group["key"] not in missing_keys:
-                continue
+        prompt_groups_to_score = [
+            prompt_group
+            for prompt_group in prompt_groups
+            if prompt_group["key"] in missing_keys and not prompt_group.get("corrupted")
+        ]
+
+        for prompt_group in tqdm(prompt_groups_to_score, total=len(prompt_groups_to_score)):
 
             user_prompts = prompt_group["user_prompts"]
             expected_answers = prompt_group["expected_answers"]
