@@ -198,6 +198,17 @@ def get_save_root(model_name: str) -> Path:
     return Path("data") / model_name.replace("/", "_")
 
 
+def load_hf_tokenizer(model_name: str):
+    from transformers import AutoTokenizer, RobertaTokenizerFast
+
+    try:
+        return AutoTokenizer.from_pretrained(model_name)
+    except TypeError as exc:
+        if "RobertaProcessing" not in str(exc):
+            raise
+        return RobertaTokenizerFast.from_pretrained(model_name)
+
+
 def get_local_elements_path(
     save_root: Path,
     classes_subset: list[int] | None = None,
@@ -278,7 +289,7 @@ def load_or_compute_activations(
     if activations_path.exists():
         return torch.load(activations_path, map_location=device)
 
-    activations, predictions = splitter.get_activations(
+    activations, _ = splitter.get_activations(
         inputs=train_inputs,
         include_predicted_classes=True,
         tqdm_bar=True,
@@ -300,23 +311,25 @@ def load_or_compute_predictions(
     if path.exists():
         return torch.load(path)
 
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from transformers import AutoModelForSequenceClassification
 
     # load model only for prediction computations
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model.to(device)
+    tokenizer = load_hf_tokenizer(model_name)
 
     predictions = torch.empty(len(inputs), dtype=torch.int8).to(device)
     with torch.no_grad():
         model.eval()
         for batch_id in tqdm(range(0, len(inputs), batch_size), desc="Predictions"):
             batch_inputs = inputs[batch_id : batch_id + batch_size]
-            batch_logits = model(
-                input_ids=tokenizer(batch_inputs, return_tensors="pt").input_ids.to(
-                    device
-                ),
-                return_dict=True,
-            )["logits"]
+            batch_tokens = tokenizer(
+                batch_inputs,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            ).to(device)
+            batch_logits = model(**batch_tokens, return_dict=True)["logits"]
             batch_predictions = torch.argmax(batch_logits, dim=1)
             predictions[batch_id : batch_id + batch_size] = batch_predictions
 
@@ -326,7 +339,7 @@ def load_or_compute_predictions(
     # Release the task model before explanation-specific work starts.
     del tokenizer
     del model
-    if device == "cuda" and torch.cuda.is_available():
+    if str(device).startswith("cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     return predictions
