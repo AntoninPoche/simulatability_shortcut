@@ -365,7 +365,7 @@ def get_interpretation_config(
         )
         config["topk"].update(
             {
-                "filename": "topk_words_interpretations.json",
+                "filename": "topk_interpretations.json",
                 "k": 10,
                 "use_unique_words": 1,
                 "unique_words_kwargs": {
@@ -656,7 +656,9 @@ def prepare_concept_explanation_resources(
 
     method_name = name_for(method)[:-8]  # remove "Concepts" suffix
     interpretation_name = name_for(interpretation)
-    nb_concepts = None if method_name == "NeuronsAs" else int(len(classes) * nb_concepts_ratio)
+    nb_concepts = (
+        None if method_name == "NeuronsAs" else int(len(classes) * nb_concepts_ratio)
+    )
     concept_dir = save_root / "concept_models" / f"{method_name}_nc{nb_concepts}"
     concept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -844,7 +846,7 @@ def load_concept_explanation_resources(
     # Determine interpretation filename from config.
     if interpretation_name == "TopKInputs":
         # Check for BIOS-style topk_words filename first, then standard.
-        for fname in ("topk_words_interpretations.json", "topk_interpretations.json"):
+        for fname in ("topk_interpretations.json", "topk_interpretations.json"):
             interp_path = concept_dir / fname
             if interp_path.exists():
                 break
