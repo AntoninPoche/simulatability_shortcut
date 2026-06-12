@@ -33,6 +33,7 @@ utils/                        # Shared library package
   ratsim.py                   # Rationale-based prompt construction
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
+generation_concept_tutorial.ipynb  # Interpreto concept tutorial, including BatchTopK SAE loss setup
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
 data/                         # Gitignored artifacts: activations, predictions, prompts, scores
 ```
@@ -57,6 +58,8 @@ data/                         # Gitignored artifacts: activations, predictions, 
 ```bash
 python scripts/make_prompts.py concepts GE seminmf
 python scripts/make_prompts.py concepts BIOS ica --nb-concepts-ratio 2
+python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk
+python scripts/make_prompts.py concepts RT neurons --interpretation topk
 python scripts/make_prompts.py rationales BIOS
 python scripts/make_prompts.py rationales BIOS --llm-model qwen3.5-9b
 python scripts/make_prompts.py attributions GE saliency
@@ -77,7 +80,7 @@ python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
 ```bash
-./sequence.sh scripts/make_prompts.py concepts GE,HE,BIOS seminmf,ica,kmeans
+./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
 ./sequence.sh scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
@@ -87,15 +90,51 @@ python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 ```
 
+## Experiment Plan
+
+### Phase 1 — new ConSim vs old ConSim
+
+Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consim` (all evaluation samples in one prompt) before launching broader explanation experiments.
+
+| Axis | Values |
+| --- | --- |
+| Datasets | `BIOS`, `RT`, `AG`, `IMDB` |
+| Methods | `seminmf`, `ica`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons` |
+| Interpretation | `topk` |
+| Seeds | `0-49` by default |
+| Samples per seed | `20` by default |
+
+Prompt generation:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
+```
+
+Debug before larger runs:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT seminmf --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neurons --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 5
+```
+
+### Phase 2 — broader explanation experiments
+
+After Phase 1 is debugged, extend to rationale, attribution, and concept simulatability grids across the intended datasets and LLM judges.
+
 ## CLI Arguments Reference
 
 ### `make_prompts.py`
 
-Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
 
 ### `make_prompts_old_consim.py`
 
-Positional: `dataset`, `method`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
+Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`
 
 ### `local_llm_scoring.py`
 
@@ -111,7 +150,7 @@ Positional: `judge_model`, `prompt_file`. Optional: `--thinking`/`--no-thinking`
 
 ## Architecture Notes
 
-- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD + TopKInputs/LLMLabels), rationales (LLM generated), and attributions (gradient-based).
+- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/BatchTopKSAE/VanillaSAE/NeuronsAsConcepts + TopKInputs/LLMLabels), rationales (LLM generated), and attributions (gradient-based).
 - **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
 - **Concept creation is integrated into prompt generation**: `make_prompts.py` builds concept artifacts (model, interpretations, global importances, ALL local importances) automatically if they are missing from cache. Heavy ML work (interpreto imports, task model loading) only happens on first run.
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
