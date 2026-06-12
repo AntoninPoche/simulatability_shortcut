@@ -10,7 +10,7 @@ import torch
 from interpreto.concepts import SemiNMFConcepts
 from interpreto.concepts.interpretations import LLMLabels, TopKInputs
 
-from utils.llm_interface import HuggingFaceLLM
+from utils.llm_interface import RoleHuggingFaceLLM
 
 # ---------------------------------------------------------------------------
 # CLI name → directory-name prefix mapping.
@@ -539,7 +539,7 @@ def load_or_compute_interpretations(
 
         llm_labels_kwargs: dict[str, Any] = {
             "concept_explainer": concept_explainer,
-            "llm_interface": HuggingFaceLLM(
+            "llm_interface": RoleHuggingFaceLLM(
                 model=llm_model, device=device, batch_size=batch_size
             ),
             "k_examples": llm_config["k_examples"],

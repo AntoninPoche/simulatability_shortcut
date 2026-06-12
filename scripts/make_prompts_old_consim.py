@@ -334,9 +334,7 @@ def main() -> None:
                             anonymize_classes=anonym,
                         )
 
-                        # Extract system_prompt and user_prompt from Role-tagged list.
-                        system_prompt = prompt[0][1]  # (Role.SYSTEM, text)
-                        user_prompt = prompt[1][1]  # (Role.USER, text)
+                        system_prompt, user_prompt = prompt
 
                         with open(output_path, "a") as handle:
                             json.dump(

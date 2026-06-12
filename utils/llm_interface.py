@@ -27,10 +27,10 @@ from __future__ import annotations
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from interpreto.commons.llm_interface import LLMInterface
+from interpreto.model_wrapping.llm_interface import LLMInterface, Role
 
 
-class HuggingFaceLLM(LLMInterface):
+class HuggingFaceLLM:
     def __init__(self, model: str, batch_size: int = 8, device: str = "auto"):
         self.model_name = model
         self.batch_size = batch_size
@@ -159,3 +159,30 @@ class HuggingFaceLLM(LLMInterface):
                 outputs.extend([None] * len(batch_prompts))
 
         return outputs
+
+
+class RoleHuggingFaceLLM(HuggingFaceLLM, LLMInterface):
+    def generate(
+        self,
+        prompt: list[tuple[Role, str]],
+        **generation_kwargs,
+    ) -> str | None:
+        system_parts: list[str] = []
+        user_parts: list[str] = []
+
+        for role, content in prompt:
+            if not content:
+                continue
+            if role == Role.SYSTEM:
+                system_parts.append(content)
+            elif role == Role.USER:
+                user_parts.append(content)
+            elif role == Role.ASSISTANT:
+                user_parts.append(f"Assistant:\n{content}")
+
+        return HuggingFaceLLM.generate(
+            self,
+            "\n\n".join(system_parts),
+            "\n\n".join(user_parts),
+            **generation_kwargs,
+        )
