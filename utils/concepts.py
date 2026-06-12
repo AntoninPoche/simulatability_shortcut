@@ -11,26 +11,7 @@ from interpreto.concepts import SemiNMFConcepts
 from interpreto.concepts.interpretations import LLMLabels, TopKInputs
 
 from utils.llm_interface import RoleHuggingFaceLLM
-
-# ---------------------------------------------------------------------------
-# CLI name → directory-name prefix mapping.
-# Directory names use the interpreto class name minus the "Concepts" suffix.
-# ---------------------------------------------------------------------------
-CONCEPT_METHOD_NAMES: dict[str, str] = {
-    "seminmf": "SemiNMF",
-    "ica": "ICA",
-    "kmeans": "KMeans",
-    "pca": "PCA",
-    "svd": "SVD",
-    "batchtopk_sae": "BatchTopKSAE",
-    "vanilla_sae": "VanillaSAE",
-    "neurons": "NeuronsAs",
-}
-
-INTERPRETATION_NAMES: dict[str, str] = {
-    "topk": "TopKInputs",
-    "llm": "LLMLabels",
-}
+from utils.registries import CONCEPT_METHOD_NAMES, INTERPRETATION_NAMES
 
 
 def get_concept_method_class(method_key: str):

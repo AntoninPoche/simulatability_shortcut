@@ -28,19 +28,11 @@ import sys
 from pathlib import Path
 
 from tqdm import tqdm
-import torch
 
 if __package__ in {None, ""}:
     # Allow `python scripts/make_prompts.py` to resolve the repo-local `utils` package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from utils.concepts import (
-    CONCEPT_METHOD_NAMES,
-    INTERPRETATION_NAMES,
-    load_or_build_concept_resources,
-    load_local_importances,
-)
-from utils.consim import ConSim, PromptTypes
 from utils.data import (
     ABBREVIATIONS,
     DATASET_CLASSES_NAMES,
@@ -54,22 +46,13 @@ from utils.data import (
     load_or_compute_predictions,
     resolve_llm_model,
 )
-from utils.rationales import (
-    load_or_generate_rationales,
-    group_rationales_by_seed,
-)
-from utils.ratsim import (
-    RationalePromptTypes,
-    RationalesSimulatability,
-)
-from utils.attributions import (
-    ATTRIBUTION_METHODS,
-    load_or_compute_attributions,
-    group_attributions_by_seed,
-)
-from utils.attrsim import (
-    AttrSim,
-    PromptTypes as AttrPromptTypes,
+from utils.registries import (
+    ATTRIBUTION_METHOD_NAMES,
+    ATTRIBUTION_PROMPT_ABBREVS,
+    CONCEPT_METHOD_NAMES,
+    CONCEPT_PROMPT_ABBREVS,
+    INTERPRETATION_NAMES,
+    RATIONALE_PROMPT_ABBREVS,
 )
 
 # ---------------------------------------------------------------------------
@@ -82,27 +65,6 @@ _DATASET_TO_MODEL: dict[str, str] = {v: k for k, v in MODELS_DATASETS.items()}
 
 # Concept extraction method names (for --method validation).
 CONCEPT_METHODS = set(CONCEPT_METHOD_NAMES.keys())
-
-# Prompt types for each explanation family.
-CONCEPT_PROMPT_TYPES = {
-    PromptTypes.B1_baseline_without_lp,
-    PromptTypes.C1_global_concepts_without_lp,
-    PromptTypes.B2_baseline_with_lp,
-    PromptTypes.C2_global_concepts_with_lp,
-    PromptTypes.C3_global_and_local_concepts_with_lp,
-}
-
-RATIONALE_PROMPT_TYPES = {
-    RationalePromptTypes.B1_baseline_without_lp,
-    RationalePromptTypes.B2_baseline_with_lp,
-    RationalePromptTypes.R1_justify_with_lp,
-}
-
-ATTRIBUTION_PROMPT_TYPES = {
-    AttrPromptTypes.B1_baseline_without_lp,
-    AttrPromptTypes.B2_baseline_with_lp,
-    AttrPromptTypes.A1_attribution_with_lp,
-}
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,7 +88,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Explanation method (not used for rationales). "
             f"For concepts: {', '.join(sorted(CONCEPT_METHODS))}. "
-            f"For attributions: {', '.join(ATTRIBUTION_METHODS.keys())}."
+            f"For attributions: {', '.join(ATTRIBUTION_METHOD_NAMES)}."
         ),
     )
     # Concept-specific arguments
@@ -177,8 +139,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device for computation.",
+        default="cuda",
+        help="Device for computation (default: cuda; falls back to cpu if unavailable).",
     )
     parser.add_argument(
         "--batch-size",
@@ -195,10 +157,6 @@ def parse_seeds(seeds_str: str) -> list[int]:
         start, end = seeds_str.split("-")
         return list(range(int(start), int(end) + 1))
     return [int(s) for s in seeds_str.split(",")]
-
-
-def has_non_finite_importances(tensors: list[torch.Tensor]) -> bool:
-    return any(not torch.isfinite(tensor).all().item() for tensor in tensors)
 
 
 def generate_prompts_for_subset(
@@ -219,19 +177,49 @@ def generate_prompts_for_subset(
     """
     Generate prompts for one class subset. Returns number of new prompts written.
     """
+    import torch
+
+    from utils.attrsim import AttrSim, PromptTypes as AttrPromptTypes
+    from utils.attributions import (
+        group_attributions_by_seed,
+        load_or_compute_attributions,
+    )
+    from utils.concepts import load_local_importances, load_or_build_concept_resources
+    from utils.consim import ConSim, PromptTypes
+    from utils.rationales import group_rationales_by_seed, load_or_generate_rationales
+    from utils.ratsim import RationalePromptTypes, RationalesSimulatability
+
+    concept_prompt_types = {
+        PromptTypes.B1_baseline_without_lp,
+        PromptTypes.C1_global_concepts_without_lp,
+        PromptTypes.B2_baseline_with_lp,
+        PromptTypes.C2_global_concepts_with_lp,
+        PromptTypes.C3_global_and_local_concepts_with_lp,
+    }
+    rationale_prompt_types = {
+        RationalePromptTypes.B1_baseline_without_lp,
+        RationalePromptTypes.B2_baseline_with_lp,
+        RationalePromptTypes.R1_justify_with_lp,
+    }
+    attribution_prompt_types = {
+        AttrPromptTypes.B1_baseline_without_lp,
+        AttrPromptTypes.B2_baseline_with_lp,
+        AttrPromptTypes.A1_attribution_with_lp,
+    }
+
     explanation_family = args.explanation_family
 
     # Determine prompt types and simulatability metric.
     if explanation_family == "concepts":
-        prompt_types = CONCEPT_PROMPT_TYPES
+        prompt_types = concept_prompt_types
         simulatability_metric = ConSim(classes=classes)
         specification = "new_consim"
     elif explanation_family == "rationales":
-        prompt_types = RATIONALE_PROMPT_TYPES
+        prompt_types = rationale_prompt_types
         simulatability_metric = RationalesSimulatability(classes=classes)
         specification = "rationales"
     else:
-        prompt_types = ATTRIBUTION_PROMPT_TYPES
+        prompt_types = attribution_prompt_types
         simulatability_metric = AttrSim(classes=classes)
         specification = "attributions"
 
@@ -336,8 +324,9 @@ def generate_prompts_for_subset(
                     sample_indices=local_indices,
                     nb_learning_samples=nb_learning_samples,
                 )
-                concept_importances_corrupted = has_non_finite_importances(
-                    [
+                concept_importances_corrupted = any(
+                    not torch.isfinite(tensor).all().item()
+                    for tensor in [
                         concept_resources.global_importances,
                         *local_explanation.local_importances,
                     ]
@@ -440,7 +429,6 @@ def generate_prompts_for_subset(
 
 def compute_expected_keys(
     *,
-    explanation_family: str,
     dataset_abbrev: str,
     model_abbrev: str,
     method_name: str,
@@ -448,17 +436,17 @@ def compute_expected_keys(
     seeds: list[int],
     nb_concepts: int | None,
     interpretation_name: str | None,
-    prompt_types: set,
+    prompt_type_abbrevs: tuple[str, ...],
     specification: str,
 ) -> set[str]:
     """Enumerate all keys this invocation would produce (for early-exit check)."""
     expected = set()
     for classes_subset in classes_subsets:
         for seed in seeds:
-            for prompt_type in prompt_types:
+            for prompt_type_abbrev in prompt_type_abbrevs:
                 for anonym in [True, False]:
-                    is_baseline = "baseline" in prompt_type.name
-                    pt_name = prompt_type.name.split("_")[0]
+                    is_baseline = prompt_type_abbrev.startswith("B")
+                    pt_name = prompt_type_abbrev
                     if anonym:
                         pt_name = "A" + pt_name
                     key = str(
@@ -485,6 +473,18 @@ def main() -> None:
     if args.method is None and args.explanation_family not in ("rationales",):
         print("Error: 'method' is required for concepts and attributions.")
         sys.exit(1)
+    if args.explanation_family == "concepts" and args.method not in CONCEPT_METHOD_NAMES:
+        print(
+            f"Error: unknown concept method '{args.method}'. "
+            f"Expected one of: {', '.join(sorted(CONCEPT_METHOD_NAMES))}."
+        )
+        sys.exit(1)
+    if args.explanation_family == "attributions" and args.method not in ATTRIBUTION_METHOD_NAMES:
+        print(
+            f"Error: unknown attribution method '{args.method}'. "
+            f"Expected one of: {', '.join(ATTRIBUTION_METHOD_NAMES)}."
+        )
+        sys.exit(1)
 
     seeds = parse_seeds(args.seeds)
 
@@ -504,19 +504,23 @@ def main() -> None:
     all_subsets = DATASET_CLASSES_SUBSETS[dataset_name]
 
     if args.explanation_family == "concepts":
-        prompt_types = CONCEPT_PROMPT_TYPES
+        prompt_type_abbrevs = CONCEPT_PROMPT_ABBREVS
         specification = "new_consim"
-        nb_concepts = None if args.method == "neurons" else int(len(classes) * args.nb_concepts_ratio)
+        nb_concepts = (
+            None
+            if args.method == "neurons"
+            else int(len(classes) * args.nb_concepts_ratio)
+        )
         interpretation_name = INTERPRETATION_NAMES[args.interpretation]
         method_for_key = CONCEPT_METHOD_NAMES[args.method]
     elif args.explanation_family == "rationales":
-        prompt_types = RATIONALE_PROMPT_TYPES
+        prompt_type_abbrevs = RATIONALE_PROMPT_ABBREVS
         specification = "rationales"
         nb_concepts = None
         interpretation_name = None
         method_for_key = args.llm_model
     else:
-        prompt_types = ATTRIBUTION_PROMPT_TYPES
+        prompt_type_abbrevs = ATTRIBUTION_PROMPT_ABBREVS
         specification = "attributions"
         nb_concepts = None
         interpretation_name = None
@@ -534,7 +538,6 @@ def main() -> None:
         existing_keys = set()
 
     expected_keys = compute_expected_keys(
-        explanation_family=args.explanation_family,
         dataset_abbrev=dataset_abbrev,
         model_abbrev=model_abbrev,
         method_name=method_for_key,
@@ -542,7 +545,7 @@ def main() -> None:
         seeds=seeds,
         nb_concepts=nb_concepts,
         interpretation_name=interpretation_name,
-        prompt_types=prompt_types,
+        prompt_type_abbrevs=prompt_type_abbrevs,
         specification=specification,
     )
 
@@ -552,6 +555,11 @@ def main() -> None:
             f"Skipping."
         )
         sys.exit(0)
+
+    import torch
+
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
+        args.device = "cpu"
 
     # --- Load data (only after early-exit check passes). ---
     print(f"Dataset:            {dataset_name} ({args.dataset})")

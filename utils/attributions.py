@@ -32,6 +32,8 @@ from interpreto import (
 )
 from interpreto.attributions.base import AttributionOutput
 
+from utils.registries import ATTRIBUTION_METHOD_NAMES
+
 # ---------------------------------------------------------------------------
 # Registry: CLI method name -> interpreto class
 # ---------------------------------------------------------------------------
@@ -47,6 +49,10 @@ ATTRIBUTION_METHODS = {
     "occlusion": Occlusion,
     "sobol": Sobol,
 }
+
+assert set(ATTRIBUTION_METHODS) == set(ATTRIBUTION_METHOD_NAMES), (
+    "ATTRIBUTION_METHODS and ATTRIBUTION_METHOD_NAMES are out of sync"
+)
 
 # Per-method extra kwargs passed to the explainer constructor.
 # Empty for now (defaults are fine), but ready for per-method tuning.
