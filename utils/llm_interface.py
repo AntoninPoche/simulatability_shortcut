@@ -132,6 +132,8 @@ class HuggingFaceLLM:
                 tokenizer_max_length = self._compute_tokenizer_max_length(
                     generation_kwargs
                 )
+                if "max_new_tokens" not in generation_kwargs:
+                    generation_kwargs["max_new_tokens"] = 32  # default
                 inputs = self.tokenizer(
                     batch_prompts,
                     return_tensors="pt",

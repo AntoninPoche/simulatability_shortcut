@@ -288,20 +288,32 @@ def load_dataset_splits(dataset: str):
 
 def load_or_compute_activations(
     splitter: SplitterForClassification,
-    train_inputs: list[str],
+    inputs: list[str],
     activations_path: Path,
     device: str,
-) -> list[torch.Tensor]:
+) -> torch.Tensor:
     import torch
 
     if activations_path.exists():
-        return torch.load(activations_path, map_location=device)
+        activations = torch.load(activations_path, map_location=device)
+        if isinstance(activations, torch.Tensor):
+            return activations
+        if isinstance(activations, dict):
+            return splitter.get_split_activations(activations)  # type: ignore[return-value]
+        print(
+            f"Ignoring invalid cached activations at {activations_path} "
+            f"({type(activations).__name__}); recomputing."
+        )
 
-    activations, _ = splitter.get_activations(
-        inputs=train_inputs,
-        include_predicted_classes=True,
+    activations = splitter.get_activations(
+        inputs=inputs,
         tqdm_bar=True,
+        forward_kwargs={"truncation": True},
     )
+    if isinstance(activations, dict):
+        activations = splitter.get_split_activations(
+            activations
+        )  # TODO: update with new API once merged
     torch.save(activations, activations_path)
     return activations  # type: ignore
 
