@@ -11,8 +11,9 @@ Handles two modes automatically:
 
 Usage examples::
 
+    python scripts/local_llm_scoring.py Qwen/Qwen3-0.6B
     python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
-    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl --no-thinking
+    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +37,10 @@ if __package__ in {None, ""}:
 from utils.data import iter_jsonl, LLM_MODELS, resolve_llm_model
 
 
+PROMPT_DIR = Path("data/prompts")
+SAMPLE_ID_RE = re.compile(r"\bSample_(\d+)\s*:")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Score ConSim prompt groups with a local LLM.",
@@ -46,31 +52,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "prompt_file",
         type=Path,
-        help="Path to the prompt JSONL file to score.",
+        nargs="?",
+        default=None,
+        help="Path to the prompt JSONL file to score. If omitted, score all data/prompts/*.jsonl files.",
     )
     parser.add_argument(
-        "--thinking", "--enable-thinking",
+        "--thinking",
         action="store_true",
         default=False,
         help="Enable thinking/chain-of-thought mode in chat template.",
     )
     parser.add_argument(
-        "--no-thinking",
-        action="store_true",
-        default=False,
-        help="Explicitly disable thinking mode.",
-    )
-    parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=2048,
-        help="Max tokens to generate per prompt (default: 2048).",
+        default=32,
+        help="Max tokens to generate per prompt (default: 32).",
     )
     parser.add_argument(
-        "--generation-batch-size",
+        "--batch-size",
         type=int,
-        default=10,
-        help="Batch size for generation (default: 10).",
+        default=16,
+        help="Batch size for generation (default: 16).",
     )
     parser.add_argument(
         "--device",
@@ -109,6 +111,21 @@ def load_treated_keys(score_path: Path) -> set[str]:
     )
 
 
+def resolve_prompt_paths(prompt_file: Path | None) -> list[Path]:
+    """Return the requested prompt file(s), defaulting to all prompt JSONL files."""
+    if prompt_file is not None:
+        if not prompt_file.exists():
+            print(f"Prompt file not found: {prompt_file}")
+            sys.exit(1)
+        return [prompt_file]
+
+    prompt_paths = sorted(PROMPT_DIR.glob("*.jsonl"))
+    if not prompt_paths:
+        print(f"No prompt JSONL files found in {PROMPT_DIR}.")
+        sys.exit(1)
+    return prompt_paths
+
+
 def render_prompt(
     tokenizer,
     system_prompt: str,
@@ -144,8 +161,7 @@ def generate_answers(
 ) -> list[str]:
     """Run batched forward passes for a prompt group."""
     full_prompts = [
-        render_prompt(tokenizer, system_prompt, up, thinking)
-        for up in user_prompts
+        render_prompt(tokenizer, system_prompt, up, thinking) for up in user_prompts
     ]
 
     generated_texts: list[str] = []
@@ -167,12 +183,78 @@ def generate_answers(
         completion_ids = generated_ids[:, model_inputs["input_ids"].shape[1] :]
         generated_texts.extend(
             text.strip()
-            for text in tokenizer.batch_decode(
-                completion_ids, skip_special_tokens=True
-            )
+            for text in tokenizer.batch_decode(completion_ids, skip_special_tokens=True)
         )
 
     return generated_texts
+
+
+def normalize_label_text(text: str | None) -> str | None:
+    """Normalize a predicted or expected label for exact-match scoring."""
+    if text is None:
+        return None
+    processed = text.strip().strip("`\"'[](){}.,;:")
+    processed = re.sub(r"\s+", " ", processed)
+    return processed if processed else None
+
+
+def prediction_matches(predicted: str | None, expected: str) -> bool:
+    """Case-insensitive exact match after lightweight label cleanup."""
+    predicted_norm = normalize_label_text(predicted)
+    expected_norm = normalize_label_text(expected)
+    if predicted_norm is None or expected_norm is None:
+        return False
+    return predicted_norm.lower() == expected_norm.lower()
+
+
+def extract_sample_ids(text: str) -> list[int]:
+    """Extract old-ConSim sample ids from a prompt or response."""
+    return [int(match.group(1)) for match in SAMPLE_ID_RE.finditer(text)]
+
+
+def label_pattern(label: str) -> re.Pattern[str]:
+    """Build a conservative pattern for labels embedded in generated text."""
+    return re.compile(
+        rf"(?<![A-Za-z0-9_/+-]){re.escape(label)}(?![A-Za-z0-9_/+-])",
+        re.IGNORECASE,
+    )
+
+
+def extract_old_consim_prediction(
+    line: str,
+    expected_answers: list[str],
+) -> str | None:
+    """Extract a class label from one old-ConSim response line."""
+    sample_match = SAMPLE_ID_RE.search(line)
+    prediction_text = line[sample_match.end() :] if sample_match else line
+
+    candidates = []
+    if ":" in prediction_text:
+        candidates.append(prediction_text.rsplit(":", 1)[1])
+        candidates.append(prediction_text.split(":", 1)[1])
+    candidates.append(prediction_text)
+
+    expected_lower = {answer.lower() for answer in expected_answers}
+    for candidate in candidates:
+        candidate_norm = normalize_label_text(candidate)
+        if candidate_norm is None:
+            continue
+        for expected in expected_answers:
+            if prediction_matches(candidate_norm, expected):
+                return expected
+
+        lowered = candidate_norm.lower()
+        if "pos" in expected_lower and label_pattern("positive").search(lowered):
+            return "pos"
+        if "neg" in expected_lower and label_pattern("negative").search(lowered):
+            return "neg"
+
+        for expected in expected_answers:
+            if label_pattern(expected).search(candidate):
+                return expected
+
+    fallback = candidates[0].strip().replace("\n", " ").split(" ")[0]
+    return normalize_label_text(fallback)
 
 
 def extract_prediction(text: str | None) -> str | None:
@@ -180,39 +262,47 @@ def extract_prediction(text: str | None) -> str | None:
     if text is None:
         return None
     processed = text.strip().replace("\n", " ").split(" ")[-1]
-    return processed if processed else None
+    return normalize_label_text(processed)
 
 
-def parse_old_consim_response(response: str, expected_length: int) -> list[str] | None:
+def parse_old_consim_response(
+    response: str,
+    expected_answers: list[str],
+    sample_ids: list[int] | None = None,
+) -> list[str | None]:
     """
     Parse multi-prediction response from old ConSim (all-at-once mode).
     Expected format: "Sample_0: class_a\\nSample_1: class_b\\n..."
     """
+    expected_length = len(expected_answers)
     if not response:
-        return None
+        return [None] * expected_length
 
     lines = [line.strip() for line in response.strip().split("\n") if line.strip()]
+    if not lines:
+        return [None] * expected_length
 
-    if len(lines) != expected_length:
-        # Try to extract whatever we can
-        predictions = []
-        for line in lines:
-            if ":" in line:
-                pred = line.split(":", 1)[1].strip().lower().split(" ")[0]
-                predictions.append(pred)
-            else:
-                predictions.append(line.strip().lower().split(" ")[0])
-        if len(predictions) != expected_length:
-            return None
-        return predictions
-
-    predictions = []
+    predictions_by_sample_id = {}
     for line in lines:
-        if ":" in line:
-            pred = line.split(":", 1)[1].strip().lower().split(" ")[0]
-        else:
-            pred = line.strip().lower().split(" ")[0]
-        predictions.append(pred)
+        sample_match = SAMPLE_ID_RE.search(line)
+        if sample_match is None:
+            continue
+        predictions_by_sample_id[int(sample_match.group(1))] = (
+            extract_old_consim_prediction(line, expected_answers)
+        )
+
+    if sample_ids and any(
+        sample_id in predictions_by_sample_id for sample_id in sample_ids
+    ):
+        return [predictions_by_sample_id.get(sample_id) for sample_id in sample_ids]
+
+    predictions = [
+        extract_old_consim_prediction(line, expected_answers) for line in lines
+    ]
+    if len(predictions) >= expected_length:
+        return predictions[-expected_length:]
+
+    predictions.extend([None] * (expected_length - len(predictions)))
     return predictions
 
 
@@ -222,20 +312,23 @@ def score_prompt_group_new(answers: list[str], expected_answers: list[str]) -> f
     failed = 0
     for answer, expected in zip(answers, expected_answers, strict=True):
         predicted = extract_prediction(answer)
-        if predicted is None:
+        if not prediction_matches(predicted, expected):
             failed += 1
             continue
-        score += int(predicted.lower() == expected.lower())
+        score += 1
     return score / len(expected_answers)
 
 
-def score_prompt_group_old(answer: str, expected_answers: list[str]) -> float:
+def score_prompt_group_old(
+    answer: str,
+    expected_answers: list[str],
+    user_prompt: str | None = None,
+) -> float:
     """Score old ConSim mode: parse multi-line response."""
-    predictions = parse_old_consim_response(answer, len(expected_answers))
-    if predictions is None:
-        return 0.0
+    sample_ids = extract_sample_ids(user_prompt) if user_prompt is not None else None
+    predictions = parse_old_consim_response(answer, expected_answers, sample_ids)
     score = sum(
-        int(pred.lower() == expected.lower())
+        int(prediction_matches(pred, expected))
         for pred, expected in zip(predictions, expected_answers, strict=True)
     )
     return score / len(expected_answers)
@@ -243,36 +336,34 @@ def score_prompt_group_old(answer: str, expected_answers: list[str]) -> float:
 
 def main() -> None:
     args = parse_args()
-    thinking = args.thinking and not args.no_thinking
 
     # Resolve short model name.
     args.judge_model = resolve_llm_model(args.judge_model)
 
-    prompt_path = args.prompt_file
-    if not prompt_path.exists():
-        print(f"Prompt file not found: {prompt_path}")
-        sys.exit(1)
+    prompt_paths = resolve_prompt_paths(args.prompt_file)
 
-    score_path = get_score_path(args.judge_model, thinking)
+    score_path = get_score_path(args.judge_model, args.thinking)
     treated_keys = load_treated_keys(score_path)
 
     # Determine which keys need scoring. Corrupted prompt groups are explicit
     # run markers and must never be forwarded to the judge.
-    prompt_groups = list(iter_jsonl(prompt_path))
-    corrupted_keys = {pg["key"] for pg in prompt_groups if pg.get("corrupted")}
+    prompt_groups = []
+    for prompt_path in prompt_paths:
+        prompt_groups.extend(iter_jsonl(prompt_path))
     requested_keys = {pg["key"] for pg in prompt_groups if not pg.get("corrupted")}
     missing_keys = requested_keys - treated_keys
 
-    if corrupted_keys:
-        print(f"Skipping {len(corrupted_keys)} corrupted prompt keys.")
-
     if not missing_keys:
-        print(f"Nothing to score. All {len(requested_keys)} keys already in {score_path}.")
+        print(
+            f"Nothing to score. All {len(requested_keys)} keys already in {score_path}."
+        )
         return
 
     print(f"Judge model:  {args.judge_model}")
-    print(f"Prompt file:  {prompt_path}")
-    print(f"Thinking:     {thinking}")
+    print(f"Prompt files: {len(prompt_paths)}")
+    for prompt_path in prompt_paths:
+        print(f"  - {prompt_path}")
+    print(f"Thinking:     {args.thinking}")
     print(f"Score file:   {score_path}")
     print(f"To score:     {len(missing_keys)} / {len(requested_keys)} keys")
     print()
@@ -300,34 +391,41 @@ def main() -> None:
     with open(score_path, "a", newline="") as handle:
         writer = csv.writer(handle)
 
-        prompt_groups_to_score = [
-            prompt_group
-            for prompt_group in prompt_groups
-            if prompt_group["key"] in missing_keys and not prompt_group.get("corrupted")
-        ]
+        prompt_groups_to_score = []
+        queued_keys: set[str] = set()
+        for prompt_group in prompt_groups:
+            key = prompt_group["key"]
+            if (
+                key in missing_keys
+                and key not in queued_keys
+                and not prompt_group.get("corrupted")
+            ):
+                prompt_groups_to_score.append(prompt_group)
+                queued_keys.add(key)
 
-        for prompt_group in tqdm(prompt_groups_to_score, total=len(prompt_groups_to_score)):
-
+        for prompt_group in tqdm(
+            prompt_groups_to_score, total=len(prompt_groups_to_score)
+        ):
             user_prompts = prompt_group["user_prompts"]
             expected_answers = prompt_group["expected_answers"]
 
             # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
-            is_old_consim = (
-                len(user_prompts) == 1 and len(expected_answers) > 1
-            )
+            is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
 
             answers = generate_answers(
                 model=model,
                 tokenizer=tokenizer,
                 system_prompt=prompt_group["system_prompt"],
                 user_prompts=user_prompts,
-                thinking=thinking,
+                thinking=args.thinking,
                 max_new_tokens=args.max_new_tokens,
-                batch_size=args.generation_batch_size,
+                batch_size=args.batch_size,
             )
 
             if is_old_consim:
-                accuracy = score_prompt_group_old(answers[0], expected_answers)
+                accuracy = score_prompt_group_old(
+                    answers[0], expected_answers, user_prompts[0]
+                )
             else:
                 accuracy = score_prompt_group_new(answers, expected_answers)
 
@@ -339,7 +437,7 @@ def main() -> None:
 
     print(
         f"\nScored {len(missing_keys)} keys with {args.judge_model} "
-        f"(thinking={thinking}). Results appended to {score_path}."
+        f"(thinking={args.thinking}). Results appended to {score_path}."
     )
 
 

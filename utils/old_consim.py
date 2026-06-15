@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 from interpreto import ModelWithSplitPoints
 from interpreto.concepts.base import ConceptAutoEncoderExplainer
-from interpreto.model_wrapping.model_with_split_points import ActivationGranularity
+from interpreto.concepts.splitters.model_with_split_points import ActivationGranularity
 
 
 class PromptSetting(NamedTuple):
@@ -945,7 +945,9 @@ class ConSim:
 
         # -----------------
         # model predictions (not included in the prompt, but returned to compute accuracy)
-        literal_model_predictions = [classes[predictions[i]] for i in range(mid_index)]
+        literal_model_predictions = [
+            classes[predictions[i]] for i in range(mid_index, 2 * mid_index)
+        ]
         if anonymize_classes:
             literal_model_predictions = [
                 anonym_classes[class_name] for class_name in literal_model_predictions

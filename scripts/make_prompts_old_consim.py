@@ -252,6 +252,16 @@ def main() -> None:
                 local_labels = torch.tensor(local_elements["labels"])
                 local_predictions = torch.tensor(local_elements["predictions"])
                 local_indices = list(local_elements["indices"])
+                subset_prediction_ids = {
+                    class_id: subset_id
+                    for subset_id, class_id in enumerate(classes_subset)
+                }
+                local_subset_predictions = torch.tensor(
+                    [
+                        subset_prediction_ids[int(prediction.item())]
+                        for prediction in local_predictions
+                    ]
+                )
 
                 # Load pre-computed local importances and extract per-predicted-class.
                 local_explanation = load_local_importances(
@@ -323,7 +333,7 @@ def main() -> None:
                         # Use old ConSim's _generate_prompt (static method).
                         prompt, literal_model_predictions = OldConSim._generate_prompt(
                             sentences=local_inputs,
-                            predictions=local_predictions,
+                            predictions=local_subset_predictions,
                             classes=[classes[c] for c in classes_subset],
                             concepts_interpretation=concept_resources.concepts_interpretation,
                             global_importances=old_global_importances

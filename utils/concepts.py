@@ -63,6 +63,23 @@ def get_interpretation_class(interp_key: str):
     return classes[interp_key]
 
 
+def compute_importances(
+    concept_explainer,
+    activations: torch.Tensor,
+    batch_size: int,
+) -> list[torch.Tensor]:
+    """Compute concept_output_gradient on the activations."""
+    gradients = concept_explainer.splitter._get_concept_output_gradients(
+        inputs=activations,
+        targets=None,
+        activations_to_concepts=concept_explainer.activations_to_concepts,
+        concepts_to_activations=concept_explainer.concepts_to_activations,
+        concepts_x_gradients=True,
+        batch_size=batch_size * 8,
+    )
+    return [concept_explainer.__normalize_gradients(g) for g in gradients]
+
+
 SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
 Your task is to analyze text and provide an explanation that thoroughly encapsulates possible patterns found in it.
 Guidelines:
@@ -284,7 +301,7 @@ def get_interpretation_config(
         "topk": {
             "filename": INTERPRETATION_FILENAMES["topk"],
             "k": 5,
-            "use_unique_words": True,
+            "use_unique_words": 3,
             "unique_words_kwargs": _default_topk_unique_words_kwargs(validation_inputs),
         },
     }
@@ -592,7 +609,7 @@ def load_or_compute_interpretations(
             interpretations,
             metadata=metadata,
         )
-        return interpretations
+        return interpretations  # type: ignore
 
     raise NotImplementedError(
         f"Interpretation not implemented for {interpretation_key}"
@@ -610,10 +627,8 @@ def load_or_compute_global_importances(
     if importances_path.exists():
         gradients = torch.load(importances_path, map_location=device)
     else:
-        gradients = concept_explainer.concept_output_gradient(
-            inputs=validation_activations,
-            concepts_x_gradients=True,
-            batch_size=batch_size,
+        gradients = compute_importances(
+            concept_explainer, validation_activations, batch_size
         )
         torch.save(gradients, importances_path)
 
@@ -639,7 +654,8 @@ def prepare_concept_explanation_resources(
     device: str,
     batch_size: int,
 ) -> GlobalConceptExplanation:
-    from utils.data import SplitterForClassification, load_or_compute_activations
+    from interpreto import SplitterForClassification
+    from utils.data import load_or_compute_activations
 
     method_name = name_for(method)[:-8]  # remove "Concepts" suffix
     nb_concepts = (
@@ -651,9 +667,10 @@ def prepare_concept_explanation_resources(
     # Keep the task model loading local to the concept-specific preparation step.
     splitter = SplitterForClassification(
         model_name,
-        device=device,
+        device_map=device,
         batch_size=batch_size,
     )
+    splitter.dispatch()
 
     activations = None
     if method_name != "NeuronsAs":
@@ -709,35 +726,12 @@ def prepare_concept_explanation_resources(
     )
 
 
-def compute_local_concept_explanation(
-    *,
-    global_explanation: GlobalConceptExplanation,
-    local_inputs: list[str],
-    nb_learning_samples: int,
-) -> LocalConceptExplanation:
-    # Only the learning-phase samples are used to build local concept explanations.
-    local_activations, _ = (
-        global_explanation.concept_explainer.model_with_split_points.get_activations(
-            local_inputs[:nb_learning_samples],
-        )
-    )
-    local_importances = global_explanation.concept_explainer.concept_output_gradient(
-        inputs=local_activations,
-        concepts_x_gradients=True,
-    )
-    local_importances = [
-        sample_importance.squeeze(1) for sample_importance in local_importances
-    ]
-
-    return LocalConceptExplanation(local_importances=local_importances)
-
-
 # ---------------------------------------------------------------------------
 # Pre-compute and cache local importances for all test samples.
 # ---------------------------------------------------------------------------
 
 
-def compute_and_cache_all_local_importances(
+def load_or_compute_all_local_importances(
     *,
     concept_explainer,
     test_activations: Any,
@@ -758,12 +752,10 @@ def compute_and_cache_all_local_importances(
         return torch.load(cache_path, map_location="cpu")
 
     print("  Computing local importances for test samples...")
-    raw_importances = concept_explainer.concept_output_gradient(
-        inputs=test_activations,
-        concepts_x_gradients=True,
-        batch_size=batch_size * 8,
+    raw_importances = compute_importances(
+        concept_explainer, test_activations, batch_size=batch_size
     )
-    # Squeeze the class dimension (same as compute_local_concept_explanation).
+    # Squeeze the class dimension.
     all_local_importances = [imp.squeeze(1) for imp in raw_importances]
     torch.save(all_local_importances, cache_path)
     print(f"  Cached at: {cache_path}")
@@ -890,7 +882,7 @@ def build_concept_resources(
     """Build all concept artifacts (model, interpretations, importances).
 
     This wraps the full pipeline from ``prepare_concept_explanation_resources``
-    and ``compute_and_cache_all_local_importances``. Called by ``make_prompts.py``
+    and ``load_or_compute_all_local_importances``. Called by ``make_prompts.py``
     when cached artifacts are missing.
 
     Releases GPU memory after completion.
@@ -917,12 +909,12 @@ def build_concept_resources(
     from utils.data import load_or_compute_activations
 
     test_activations, _ = load_or_compute_activations(
-        splitter=global_explanation.concept_explainer.model_with_split_points,
+        splitter=global_explanation.concept_explainer.splitter,
         inputs=test_inputs,
         activations_path=save_root / "test_activations.pt",
         device=device,
     )
-    compute_and_cache_all_local_importances(
+    load_or_compute_all_local_importances(
         concept_explainer=global_explanation.concept_explainer,
         test_activations=test_activations,
         concept_dir=global_explanation.concept_dir,

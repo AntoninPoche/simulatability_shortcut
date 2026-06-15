@@ -311,6 +311,7 @@ def load_or_compute_dataset_activations(
 ]:
     import gc
     import torch
+    from interpreto import SplitterForClassification
 
     split_specs = (
         (train_inputs, save_root / "activations.pt"),
@@ -330,7 +331,7 @@ def load_or_compute_dataset_activations(
                 # Load the task model only once.
                 splitter = SplitterForClassification(
                     model_name,
-                    device=device,
+                    device_map=device,
                     batch_size=batch_size,
                 )
 
@@ -340,6 +341,7 @@ def load_or_compute_dataset_activations(
                 tqdm_bar=True,
                 forward_kwargs={"truncation": True},
             )
+            path.parent.mkdir(parents=True, exist_ok=True)
             torch.save((activations, predictions), path)
             outputs.append((activations, predictions.cpu()))
 

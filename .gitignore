@@ -212,5 +212,6 @@ data/
 quick_test.ipynb
 
 # LaTeX report
-LaTeX-Contrastive-Concept-Based-Explanations
 setup_cluster.sh
+LaTeX-Simulatability-Shortcut
+

@@ -46,32 +46,32 @@ Run the smallest checks before launching the full grid:
 1. Verify standard concept prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT seminmf --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT seminmf --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 2. Verify old ConSim loads the same cached concept resources:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 3. Verify SAE concept training and prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 4. Verify old ConSim works for an SAE method:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 5. Verify neurons-as-concepts prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neurons --interpretation topk --seeds 0 --nb-samples 5
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neurons --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 6. Score one small prompt file with the intended judge:
@@ -83,7 +83,7 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/local_llm_scoring.py qwen3.5-9b 
 7. Smoke-test the grid runner:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts RT,AG seminmf,pca --interpretation topk --seeds 0 --nb-samples 5
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts RT,AG seminmf,pca --interpretation topk --seeds 0 --nb-samples 20
 ```
 
 Only launch the full grid after these checks pass or the failures are understood.
