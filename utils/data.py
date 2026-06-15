@@ -3,8 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
-from tqdm import tqdm
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import torch
@@ -198,17 +197,6 @@ def get_save_root(model_name: str) -> Path:
     return Path("data") / model_name.replace("/", "_")
 
 
-def load_hf_tokenizer(model_name: str):
-    from transformers import AutoTokenizer, RobertaTokenizerFast
-
-    try:
-        return AutoTokenizer.from_pretrained(model_name)
-    except TypeError as exc:
-        if "RobertaProcessing" not in str(exc):
-            raise
-        return RobertaTokenizerFast.from_pretrained(model_name)
-
-
 def get_local_elements_path(
     save_root: Path,
     classes_subset: list[int] | None = None,
@@ -291,78 +279,77 @@ def load_or_compute_activations(
     inputs: list[str],
     activations_path: Path,
     device: str,
-) -> torch.Tensor:
+) -> tuple[Any, torch.Tensor]:
     import torch
 
     if activations_path.exists():
-        activations = torch.load(activations_path, map_location=device)
-        if isinstance(activations, torch.Tensor):
-            return activations
-        if isinstance(activations, dict):
-            return splitter.get_split_activations(activations)  # type: ignore[return-value]
-        print(
-            f"Ignoring invalid cached activations at {activations_path} "
-            f"({type(activations).__name__}); recomputing."
-        )
+        activations, predictions = torch.load(activations_path, map_location=device)
+        return activations, predictions.cpu()
 
-    activations = splitter.get_activations(
+    activations, predictions = splitter.get_activations(
         inputs=inputs,
         tqdm_bar=True,
         forward_kwargs={"truncation": True},
     )
-    if isinstance(activations, dict):
-        activations = splitter.get_split_activations(
-            activations
-        )  # TODO: update with new API once merged
-    torch.save(activations, activations_path)
-    return activations  # type: ignore
+    predictions = predictions.cpu()
+    activations_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save((activations, predictions), activations_path)
+    return activations, predictions
 
 
-def load_or_compute_predictions(
+def load_or_compute_dataset_activations(
     *,
     model_name: str,
-    inputs: list[str],
-    path: Path,
+    save_root: Path,
+    train_inputs: list[str],
+    validation_inputs: list[str],
+    test_inputs: list[str],
     device: str,
     batch_size: int,
-) -> torch.Tensor:
+) -> tuple[
+    tuple[Any, torch.Tensor], tuple[Any, torch.Tensor], tuple[Any, torch.Tensor]
+]:
+    import gc
     import torch
 
-    if path.exists():
-        return torch.load(path)
+    split_specs = (
+        (train_inputs, save_root / "activations.pt"),
+        (validation_inputs, save_root / "validation_activations.pt"),
+        (test_inputs, save_root / "test_activations.pt"),
+    )
 
-    from transformers import AutoModelForSequenceClassification
+    splitter = None
+    outputs = []
+    for inputs, path in split_specs:
+        # Load cached activations if they exist.
+        if path.exists():
+            activations, predictions = torch.load(path, map_location=device)
+            outputs.append((activations, predictions.cpu()))
+        else:
+            if splitter is None:
+                # Load the task model only once.
+                splitter = SplitterForClassification(
+                    model_name,
+                    device=device,
+                    batch_size=batch_size,
+                )
 
-    # load model only for prediction computations
-    model = AutoModelForSequenceClassification.from_pretrained(model_name)
-    model.to(device)
-    tokenizer = load_hf_tokenizer(model_name)
+            # Compute activations and predictions.
+            activations, predictions = splitter.get_activations(
+                inputs=inputs,
+                tqdm_bar=True,
+                forward_kwargs={"truncation": True},
+            )
+            torch.save((activations, predictions), path)
+            outputs.append((activations, predictions.cpu()))
 
-    predictions = torch.empty(len(inputs), dtype=torch.int8).to(device)
-    with torch.no_grad():
-        model.eval()
-        for batch_id in tqdm(range(0, len(inputs), batch_size), desc="Predictions"):
-            batch_inputs = inputs[batch_id : batch_id + batch_size]
-            batch_tokens = tokenizer(
-                batch_inputs,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-            ).to(device)
-            batch_logits = model(**batch_tokens, return_dict=True)["logits"]
-            batch_predictions = torch.argmax(batch_logits, dim=1)
-            predictions[batch_id : batch_id + batch_size] = batch_predictions
+    if splitter is not None:
+        del splitter
+        gc.collect()
+        if str(device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-    predictions = predictions.cpu()
-    torch.save(predictions, path)
-
-    # Release the task model before explanation-specific work starts.
-    del tokenizer
-    del model
-    if str(device).startswith("cuda") and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    return predictions
+    return tuple(outputs)  # type: ignore[return-value]
 
 
 def load_or_compute_local_elements(

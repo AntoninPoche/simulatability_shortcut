@@ -31,7 +31,6 @@ if __package__ in {None, ""}:
 
 from utils.concepts import (
     CONCEPT_METHOD_NAMES,
-    INTERPRETATION_NAMES,
     load_concept_explanation_resources,
     load_local_importances,
 )
@@ -45,9 +44,10 @@ from utils.data import (
     get_save_root,
     iter_jsonl,
     load_dataset_splits,
+    load_or_compute_dataset_activations,
     load_or_compute_local_elements,
-    load_or_compute_predictions,
 )
+from utils.registries import INTERPRETATION_KEYS
 
 # ---------------------------------------------------------------------------
 _ABBREV_TO_DATASET: dict[str, str] = {
@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--interpretation",
-        choices=sorted(INTERPRETATION_NAMES.keys()),
+        choices=sorted(INTERPRETATION_KEYS),
         default="topk",
         help="Interpretation method (default: topk).",
     )
@@ -177,8 +177,7 @@ def main() -> None:
     print(f"Output:          {output_path}")
     print()
 
-    # Load dataset (only test split needed).
-    _train_inputs, _validation_inputs, test_inputs, test_labels = load_dataset_splits(
+    train_inputs, validation_inputs, test_inputs, test_labels = load_dataset_splits(
         dataset_name
     )
     classes = DATASET_CLASSES_NAMES[dataset_name]
@@ -186,23 +185,26 @@ def main() -> None:
     # We use the NEW ConSim's select_examples to ensure identical samples.
     simulatability_metric = ConSim(classes=classes)
 
-    test_predictions = load_or_compute_predictions(
+    _, _, test_artifacts = load_or_compute_dataset_activations(
         model_name=model_name,
-        inputs=test_inputs,
-        path=save_root / "test_predictions.pt",
+        save_root=save_root,
+        train_inputs=train_inputs,
+        validation_inputs=validation_inputs,
+        test_inputs=test_inputs,
         device=args.device,
         batch_size=args.batch_size,
     )
+    _, test_predictions = test_artifacts
 
     # Load pre-built concept resources (load-only, no interpreto needed).
     nb_concepts = None if args.method == "neurons" else int(len(classes) * args.nb_concepts_ratio)
-    interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+    interpretation_key = args.interpretation
     method_dir_name = CONCEPT_METHOD_NAMES[args.method]
     concept_resources = load_concept_explanation_resources(
         save_root=save_root,
         method_name=method_dir_name,
         nb_concepts=nb_concepts,
-        interpretation_name=interpretation_name,
+        interpretation_key=interpretation_key,
         classes=classes,
     )
 
@@ -293,7 +295,7 @@ def main() -> None:
                                 seed,
                                 method_name,
                                 concept_resources.nb_concepts,
-                                concept_resources.interpretation_name,
+                                concept_resources.interpretation_key,
                                 prompt_type_name
                                 if not anonym
                                 else "A" + prompt_type_name,

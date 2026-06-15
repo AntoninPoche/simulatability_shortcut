@@ -42,8 +42,8 @@ from utils.data import (
     get_save_root,
     iter_jsonl,
     load_dataset_splits,
+    load_or_compute_dataset_activations,
     load_or_compute_local_elements,
-    load_or_compute_predictions,
     resolve_llm_model,
 )
 from utils.registries import (
@@ -51,7 +51,7 @@ from utils.registries import (
     ATTRIBUTION_PROMPT_ABBREVS,
     CONCEPT_METHOD_NAMES,
     CONCEPT_PROMPT_ABBREVS,
-    INTERPRETATION_NAMES,
+    INTERPRETATION_KEYS,
     RATIONALE_PROMPT_ABBREVS,
 )
 
@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--interpretation",
-        choices=sorted(INTERPRETATION_NAMES.keys()),
+        choices=sorted(INTERPRETATION_KEYS),
         default="topk",
         help="Interpretation method for concept labeling (default: topk).",
     )
@@ -145,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=512,
         help="Batch size for model inference (default: 64).",
     )
     return parser.parse_args()
@@ -348,7 +348,7 @@ def generate_prompts_for_subset(
                         concept_resources.method_name if not is_baseline else "baseline"
                     )
                     nb_concepts = concept_resources.nb_concepts
-                    interpretation_name = concept_resources.interpretation_name
+                    interpretation_key = concept_resources.interpretation_key
                     construct_prompt_kwargs = {
                         "concepts_interpretation": concept_resources.concepts_interpretation,
                         "global_importances": concept_resources.global_importances,
@@ -357,14 +357,14 @@ def generate_prompts_for_subset(
                 elif explanation_family == "rationales":
                     method_name = args.llm_model if not is_baseline else "baseline"
                     nb_concepts = None
-                    interpretation_name = None
+                    interpretation_key = None
                     construct_prompt_kwargs = {
                         "rationales": local_rationales,
                     }
                 else:
                     method_name = args.method if not is_baseline else "baseline"
                     nb_concepts = None
-                    interpretation_name = None
+                    interpretation_key = None
                     construct_prompt_kwargs = {
                         "corresponding_attribution": local_attributions,
                     }
@@ -377,7 +377,7 @@ def generate_prompts_for_subset(
                         seed,  # 3
                         method_name,  # 4
                         nb_concepts,  # 5
-                        interpretation_name,  # 6
+                        interpretation_key,  # 6
                         prompt_type_name if not anonym else "A" + prompt_type_name,  # 7
                         specification,  # 8
                     )
@@ -435,7 +435,7 @@ def compute_expected_keys(
     classes_subsets: list[list[int]],
     seeds: list[int],
     nb_concepts: int | None,
-    interpretation_name: str | None,
+    interpretation_key: str | None,
     prompt_type_abbrevs: tuple[str, ...],
     specification: str,
 ) -> set[str]:
@@ -457,7 +457,7 @@ def compute_expected_keys(
                             seed,
                             "baseline" if is_baseline else method_name,
                             nb_concepts,
-                            interpretation_name,
+                            interpretation_key,
                             pt_name,
                             specification,
                         )
@@ -473,13 +473,19 @@ def main() -> None:
     if args.method is None and args.explanation_family not in ("rationales",):
         print("Error: 'method' is required for concepts and attributions.")
         sys.exit(1)
-    if args.explanation_family == "concepts" and args.method not in CONCEPT_METHOD_NAMES:
+    if (
+        args.explanation_family == "concepts"
+        and args.method not in CONCEPT_METHOD_NAMES
+    ):
         print(
             f"Error: unknown concept method '{args.method}'. "
             f"Expected one of: {', '.join(sorted(CONCEPT_METHOD_NAMES))}."
         )
         sys.exit(1)
-    if args.explanation_family == "attributions" and args.method not in ATTRIBUTION_METHOD_NAMES:
+    if (
+        args.explanation_family == "attributions"
+        and args.method not in ATTRIBUTION_METHOD_NAMES
+    ):
         print(
             f"Error: unknown attribution method '{args.method}'. "
             f"Expected one of: {', '.join(ATTRIBUTION_METHOD_NAMES)}."
@@ -511,19 +517,19 @@ def main() -> None:
             if args.method == "neurons"
             else int(len(classes) * args.nb_concepts_ratio)
         )
-        interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+        interpretation_key = args.interpretation
         method_for_key = CONCEPT_METHOD_NAMES[args.method]
     elif args.explanation_family == "rationales":
         prompt_type_abbrevs = RATIONALE_PROMPT_ABBREVS
         specification = "rationales"
         nb_concepts = None
-        interpretation_name = None
+        interpretation_key = None
         method_for_key = args.llm_model
     else:
         prompt_type_abbrevs = ATTRIBUTION_PROMPT_ABBREVS
         specification = "attributions"
         nb_concepts = None
-        interpretation_name = None
+        interpretation_key = None
         method_for_key = args.method
 
     output_path = Path(f"data/prompts/{args.dataset}_{args.explanation_family}.jsonl")
@@ -544,7 +550,7 @@ def main() -> None:
         classes_subsets=all_subsets,
         seeds=seeds,
         nb_concepts=nb_concepts,
-        interpretation_name=interpretation_name,
+        interpretation_key=interpretation_key,
         prompt_type_abbrevs=prompt_type_abbrevs,
         specification=specification,
     )
@@ -577,14 +583,18 @@ def main() -> None:
         dataset_name
     )
 
-    # Compute predictions once.
-    test_predictions = load_or_compute_predictions(
+    # get_activations now produces both activations and predictions. Build all
+    # split caches up front so downstream scripts can reuse the same artifacts.
+    _, _, test_artifacts = load_or_compute_dataset_activations(
         model_name=model_name,
-        inputs=test_inputs,
-        path=save_root / "test_predictions.pt",
+        save_root=save_root,
+        train_inputs=train_inputs,
+        validation_inputs=validation_inputs,
+        test_inputs=test_inputs,
         device=args.device,
         batch_size=args.batch_size,
     )
+    _, test_predictions = test_artifacts
 
     # Store train/validation on args for the concept-building fallback path.
     args.train_inputs = train_inputs

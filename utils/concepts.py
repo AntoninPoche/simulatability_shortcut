@@ -7,11 +7,13 @@ from typing import NamedTuple
 
 import torch
 
-from interpreto.concepts import SemiNMFConcepts
-from interpreto.concepts.interpretations import LLMLabels, TopKInputs
+from utils.registries import CONCEPT_METHOD_NAMES, INTERPRETATION_KEYS
 
-from utils.llm_interface import RoleHuggingFaceLLM
-from utils.registries import CONCEPT_METHOD_NAMES, INTERPRETATION_NAMES
+
+INTERPRETATION_FILENAMES: dict[str, str] = {
+    "llm": "llm_interpretations.json",
+    "topk": "topk_interpretations.json",
+}
 
 
 def get_concept_method_class(method_key: str):
@@ -207,7 +209,7 @@ class GlobalConceptExplanation(NamedTuple):
     concepts_interpretation: dict[int, str]
     global_importances: torch.Tensor
     method_name: str
-    interpretation_name: str
+    interpretation_key: str
     nb_concepts: int | None
     concept_dir: Path
 
@@ -273,14 +275,14 @@ def get_interpretation_config(
 ) -> dict[str, dict[str, Any]]:
     config: dict[str, dict[str, Any]] = {
         "llm": {
-            "filename": "llm_interpretations.json",
+            "filename": INTERPRETATION_FILENAMES["llm"],
             "k_examples": 20,
             "system_prompt": SYSTEM_PROMPT,
             "use_unique_words": None,
             "unique_words_kwargs": None,
         },
         "topk": {
-            "filename": "topk_interpretations.json",
+            "filename": INTERPRETATION_FILENAMES["topk"],
             "k": 5,
             "use_unique_words": True,
             "unique_words_kwargs": _default_topk_unique_words_kwargs(validation_inputs),
@@ -384,7 +386,7 @@ def get_interpretation_config(
 
 def load_concept_model(concept_explainer, model_path: Path, device):
     concept_explainer.concept_model._set_fitted()
-    if isinstance(concept_explainer, SemiNMFConcepts):
+    if concept_explainer.__class__.__name__ == "SemiNMFConcepts":
         D = torch.load(model_path, map_location=device)
         concept_explainer.concept_model.D = D
         return concept_explainer
@@ -401,7 +403,7 @@ def load_concept_model(concept_explainer, model_path: Path, device):
 
 
 def save_concept_model(concept_explainer, model_path: Path) -> None:
-    if isinstance(concept_explainer, SemiNMFConcepts):
+    if concept_explainer.__class__.__name__ == "SemiNMFConcepts":
         torch.save(concept_explainer.concept_model.D, model_path)
         return
     if hasattr(concept_explainer.concept_model, "state_dict"):
@@ -415,7 +417,7 @@ def save_concept_model(concept_explainer, model_path: Path) -> None:
 def load_or_fit_concept_model(
     splitter,
     concept_dir: Path,
-    activations: torch.Tensor | None,
+    activations: Any | None,
     method,
     nb_concepts: int | None,
     device,
@@ -473,7 +475,7 @@ def load_or_fit_concept_model(
 def load_or_compute_interpretations(
     concept_explainer,
     validation_inputs: list[str],
-    interpretation,
+    interpretation_key: str,
     concept_dir: Path,
     llm_model: str | None,
     classes_names,
@@ -483,21 +485,25 @@ def load_or_compute_interpretations(
     device: str = "cuda",
     batch_size: int = 8,
 ) -> dict[int, str]:
-    interpretation_name = name_for(interpretation)
+    if interpretation_key not in INTERPRETATION_KEYS:
+        raise ValueError(f"Unknown interpretation: {interpretation_key}")
+
     config = get_interpretation_config(
         dataset_name=dataset_name,
         model_name=model_name,
         validation_inputs=validation_inputs,
     )
 
-    if interpretation is LLMLabels:
+    if interpretation_key == "llm":
+        from utils.llm_interface import RoleHuggingFaceLLM
+
         llm_config = config["llm"]
         prompt_path = concept_dir / llm_config["filename"]
         system_prompt = llm_config["system_prompt"] + ", ".join(classes_names)
         metadata = {
             "dataset_name": dataset_name,
             "model_name": model_name,
-            "interpretation_name": interpretation_name,
+            "interpretation_key": interpretation_key,
             "llm_model": llm_model,
             "filename": llm_config["filename"],
             "k_examples": llm_config["k_examples"],
@@ -531,7 +537,8 @@ def load_or_compute_interpretations(
         if llm_config["unique_words_kwargs"] is not None:
             llm_labels_kwargs["unique_words_kwargs"] = llm_config["unique_words_kwargs"]
 
-        llm_labels_method = LLMLabels(**llm_labels_kwargs)
+        interpretation_class = get_interpretation_class(interpretation_key)
+        llm_labels_method = interpretation_class(**llm_labels_kwargs)
         interpretations = llm_labels_method.interpret(
             inputs=validation_inputs,
             concepts_indices="all",
@@ -544,13 +551,13 @@ def load_or_compute_interpretations(
         )
         return interpretations  # type: ignore
 
-    if interpretation is TopKInputs:
+    if interpretation_key == "topk":
         topk_config = config["topk"]
         prompt_path = concept_dir / topk_config["filename"]
         metadata = {
             "dataset_name": dataset_name,
             "model_name": model_name,
-            "interpretation_name": interpretation_name,
+            "interpretation_key": interpretation_key,
             "filename": topk_config["filename"],
             "k": topk_config["k"],
             "use_unique_words": topk_config["use_unique_words"],
@@ -564,7 +571,8 @@ def load_or_compute_interpretations(
         if cached_interpretations is not None:
             return cached_interpretations  # type: ignore[return-value]
 
-        topk_inputs_method = TopKInputs(
+        interpretation_class = get_interpretation_class(interpretation_key)
+        topk_inputs_method = interpretation_class(
             concept_explainer=concept_explainer,
             k=topk_config["k"],
             use_unique_words=topk_config["use_unique_words"],
@@ -587,13 +595,13 @@ def load_or_compute_interpretations(
         return interpretations
 
     raise NotImplementedError(
-        f"Interpretation not implemented for {interpretation_name}"
+        f"Interpretation not implemented for {interpretation_key}"
     )
 
 
 def load_or_compute_global_importances(
     concept_explainer,
-    validation_activations: "torch.Tensor",
+    validation_activations: Any,
     concept_dir: Path,
     device,
     batch_size,
@@ -626,17 +634,14 @@ def prepare_concept_explanation_resources(
     classes: list[str],
     method,
     nb_concepts_ratio: int | float,
-    interpretation,
+    interpretation_key: str,
     llm_model: str | None,
     device: str,
     batch_size: int,
 ) -> GlobalConceptExplanation:
-    from interpreto import SplitSequenceClassification as SplitterForClassification
-    from transformers import AutoModelForSequenceClassification
-    from utils.data import load_hf_tokenizer, load_or_compute_activations
+    from utils.data import SplitterForClassification, load_or_compute_activations
 
     method_name = name_for(method)[:-8]  # remove "Concepts" suffix
-    interpretation_name = name_for(interpretation)
     nb_concepts = (
         None if method_name == "NeuronsAs" else int(len(classes) * nb_concepts_ratio)
     )
@@ -644,25 +649,20 @@ def prepare_concept_explanation_resources(
     concept_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep the task model loading local to the concept-specific preparation step.
-    model = AutoModelForSequenceClassification.from_pretrained(model_name)
-    tokenizer = load_hf_tokenizer(model_name)
     splitter = SplitterForClassification(
-        model,
-        tokenizer=tokenizer,
-        device_map=device,
+        model_name,
+        device=device,
         batch_size=batch_size,
     )
 
     activations = None
     if method_name != "NeuronsAs":
-        activations = load_or_compute_activations(
+        activations, _ = load_or_compute_activations(
             splitter=splitter,
             inputs=train_inputs,
             activations_path=save_root / "activations.pt",
             device=device,
         )
-        if isinstance(activations, dict):
-            activations = splitter.get_split_activations(activations)
     concept_explainer = load_or_fit_concept_model(
         splitter=splitter,
         concept_dir=concept_dir,
@@ -675,7 +675,7 @@ def prepare_concept_explanation_resources(
     concepts_interpretation = load_or_compute_interpretations(
         concept_explainer=concept_explainer,
         validation_inputs=validation_inputs,
-        interpretation=interpretation,
+        interpretation_key=interpretation_key,
         concept_dir=concept_dir,
         llm_model=llm_model,
         classes_names=classes,
@@ -684,7 +684,7 @@ def prepare_concept_explanation_resources(
         device=device,
         batch_size=batch_size,
     )
-    validation_activations = load_or_compute_activations(
+    validation_activations, _ = load_or_compute_activations(
         splitter=splitter,
         inputs=validation_inputs,
         activations_path=save_root / "validation_activations.pt",
@@ -703,7 +703,7 @@ def prepare_concept_explanation_resources(
         concepts_interpretation=concepts_interpretation,
         global_importances=global_importances,
         method_name=method_name,
-        interpretation_name=interpretation_name,
+        interpretation_key=interpretation_key,
         nb_concepts=nb_concepts,
         concept_dir=concept_dir,
     )
@@ -716,7 +716,7 @@ def compute_local_concept_explanation(
     nb_learning_samples: int,
 ) -> LocalConceptExplanation:
     # Only the learning-phase samples are used to build local concept explanations.
-    local_activations = (
+    local_activations, _ = (
         global_explanation.concept_explainer.model_with_split_points.get_activations(
             local_inputs[:nb_learning_samples],
         )
@@ -740,7 +740,7 @@ def compute_local_concept_explanation(
 def compute_and_cache_all_local_importances(
     *,
     concept_explainer,
-    test_activations: "torch.Tensor",
+    test_activations: Any,
     concept_dir: Path,
     batch_size: int = 64,
 ) -> list[torch.Tensor]:
@@ -757,7 +757,7 @@ def compute_and_cache_all_local_importances(
         print(f"  Local importances already cached: {cache_path}")
         return torch.load(cache_path, map_location="cpu")
 
-    print(f"  Computing local importances for {len(test_activations)} test samples...")
+    print("  Computing local importances for test samples...")
     raw_importances = concept_explainer.concept_output_gradient(
         inputs=test_activations,
         concepts_x_gradients=True,
@@ -814,7 +814,7 @@ def load_concept_explanation_resources(
     save_root: Path,
     method_name: str,
     nb_concepts: int | None,
-    interpretation_name: str,
+    interpretation_key: str,
     classes: list[str],
     device: str = "cpu",
 ) -> GlobalConceptExplanation:
@@ -834,18 +834,11 @@ def load_concept_explanation_resources(
     if not concept_model_path.exists():
         raise FileNotFoundError(f"Concept model not found at {concept_model_path}.")
 
-    # Load interpretations.
-    # Determine interpretation filename from config.
-    if interpretation_name == "TopKInputs":
-        interp_path = concept_dir / "topk_interpretations.json"
-        if not interp_path.exists():
-            raise FileNotFoundError(f"TopK interpretations not found at {interp_path}.")
-    elif interpretation_name == "LLMLabels":
-        interp_path = concept_dir / "llm_interpretations.json"
-        if not interp_path.exists():
-            raise FileNotFoundError(f"LLM interpretations not found at {interp_path}.")
-    else:
-        raise ValueError(f"Unknown interpretation: {interpretation_name}")
+    if interpretation_key not in INTERPRETATION_FILENAMES:
+        raise ValueError(f"Unknown interpretation: {interpretation_key}")
+    interp_path = concept_dir / INTERPRETATION_FILENAMES[interpretation_key]
+    if not interp_path.exists():
+        raise FileNotFoundError(f"Interpretations not found at {interp_path}.")
 
     with open(interp_path) as handle:
         raw_interpretations = json.load(handle)
@@ -867,7 +860,7 @@ def load_concept_explanation_resources(
         concepts_interpretation=concepts_interpretation,
         global_importances=global_importances,
         method_name=method_name,
-        interpretation_name=interpretation_name,
+        interpretation_key=interpretation_key,
         nb_concepts=nb_concepts,
         concept_dir=concept_dir,
     )
@@ -905,7 +898,6 @@ def build_concept_resources(
     import gc
 
     method_class = get_concept_method_class(method_key)
-    interpretation_class = get_interpretation_class(interpretation_key)
 
     global_explanation = prepare_concept_explanation_resources(
         dataset_name=dataset_name,
@@ -916,7 +908,7 @@ def build_concept_resources(
         classes=classes,
         method=method_class,
         nb_concepts_ratio=nb_concepts_ratio,
-        interpretation=interpretation_class,
+        interpretation_key=interpretation_key,
         llm_model=llm_model,
         device=device,
         batch_size=batch_size,
@@ -924,7 +916,7 @@ def build_concept_resources(
 
     from utils.data import load_or_compute_activations
 
-    test_activations = load_or_compute_activations(
+    test_activations, _ = load_or_compute_activations(
         splitter=global_explanation.concept_explainer.model_with_split_points,
         inputs=test_inputs,
         activations_path=save_root / "test_activations.pt",
@@ -963,7 +955,7 @@ def load_or_build_concept_resources(
     nb_concepts = int(len(classes) * args.nb_concepts_ratio)
     if args.method == "neurons":
         nb_concepts = None
-    interpretation_name = INTERPRETATION_NAMES[args.interpretation]
+    interpretation_key = args.interpretation
     method_dir_name = CONCEPT_METHOD_NAMES[args.method]
 
     try:
@@ -971,7 +963,7 @@ def load_or_build_concept_resources(
             save_root=save_root,
             method_name=method_dir_name,
             nb_concepts=nb_concepts,
-            interpretation_name=interpretation_name,
+            interpretation_key=interpretation_key,
             classes=classes,
         )
         # Also verify local importances exist (not checked by load above).
@@ -1003,6 +995,6 @@ def load_or_build_concept_resources(
         save_root=save_root,
         method_name=method_dir_name,
         nb_concepts=nb_concepts,
-        interpretation_name=interpretation_name,
+        interpretation_key=interpretation_key,
         classes=classes,
     )

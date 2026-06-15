@@ -18,10 +18,7 @@ CONCEPT_METHOD_NAMES: dict[str, str] = {
     "neurons": "NeuronsAs",
 }
 
-INTERPRETATION_NAMES: dict[str, str] = {
-    "topk": "TopKInputs",
-    "llm": "LLMLabels",
-}
+INTERPRETATION_KEYS: tuple[str, ...] = ("topk", "llm")
 
 # Valid CLI names for attribution methods. Must match ATTRIBUTION_METHODS in
 # utils/attributions.py.

@@ -36,14 +36,14 @@ utils/                        # Shared library package
 sequence.sh                   # Cartesian-product script runner (see Commands below)
 generation_concept_tutorial.ipynb  # Interpreto concept tutorial, including BatchTopK SAE loss setup
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
-data/                         # Gitignored artifacts: activations, predictions, prompts, scores
+data/                         # Gitignored artifacts: activation/prediction caches, prompts, scores
 ```
 
 ## Import Architecture
 
 - **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `ratsim.py` — these are the canonical implementations, not imported from interpreto.
 - **Lightweight key registries**: `utils/registries.py` stores method names and prompt abbreviations used for argument validation and early-exit key computation without importing torch/interpreto/transformers.
-- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, `LLMLabels`, `TopKInputs`. Used only by `utils/concepts.py` for the heavy ML components (loaded lazily when concept artifacts need building).
+- **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, and concept interpretation implementations resolved from keys such as `topk`/`llm`. Used only by `utils/concepts.py` for the heavy ML components (loaded lazily when concept artifacts need building).
 - **Prompt scripts (`make_prompts.py`, `make_prompts_old_consim.py`) import from `utils/concepts.py`** — which handles both loading cached artifacts and building them (with interpreto) when missing.
 - All scripts add the repo root to `sys.path` so `from utils.* import ...` works when running `python scripts/foo.py`.
 
@@ -152,9 +152,10 @@ Positional: `judge_model`, `prompt_file`. Optional: `--thinking`/`--no-thinking`
 
 ## Architecture Notes
 
-- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/BatchTopKSAE/VanillaSAE/NeuronsAsConcepts + TopKInputs/LLMLabels), rationales (LLM generated), and attributions (gradient-based).
+- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/BatchTopKSAE/VanillaSAE/NeuronsAsConcepts with `topk`/`llm` interpretation keys), rationales (LLM generated), and attributions (gradient-based).
 - **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
 - **Concept creation is integrated into prompt generation**: `make_prompts.py` builds concept artifacts (model, interpretations, global importances, ALL local importances) automatically if they are missing from cache. Heavy ML work (interpreto imports, task model loading) only happens on first run.
+- **Activation/prediction caches**: `get_activations` returns `(activations, predictions)`, and `utils.data.load_or_compute_activations` caches that tuple for train/validation/test splits (`activations.pt`, `validation_activations.pt`, `test_activations.pt`). There is no separate prediction cache.
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
 - **Early-exit optimization**: `make_prompts.py` computes all expected output keys before importing torch/interpreto/transformers or loading data/models. If all entries already exist in the output JSONL, the script exits immediately (no model loading overhead).
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
