@@ -301,7 +301,7 @@ def get_interpretation_config(
         "topk": {
             "filename": INTERPRETATION_FILENAMES["topk"],
             "k": 5,
-            "use_unique_words": True,
+            "use_unique_words": 3,
             "unique_words_kwargs": _default_topk_unique_words_kwargs(validation_inputs),
         },
     }
@@ -609,7 +609,7 @@ def load_or_compute_interpretations(
             interpretations,
             metadata=metadata,
         )
-        return interpretations
+        return interpretations  # type: ignore
 
     raise NotImplementedError(
         f"Interpretation not implemented for {interpretation_key}"
