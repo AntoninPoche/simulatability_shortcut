@@ -7,6 +7,7 @@ dependencies = [
     "datasets",
     "git+https://github.com/FOR-sight-ai/interpreto.git@concepts-refacto",
     "transformers",
+    "tokenizers==0.22",
     "tqdm",
     "ipykernel",
     "pandas",
