@@ -593,7 +593,7 @@ def load_or_compute_interpretations(
 
 def load_or_compute_global_importances(
     concept_explainer,
-    validation_inputs: list[str],
+    validation_activations: "torch.Tensor",
     concept_dir: Path,
     device,
     batch_size,
@@ -603,7 +603,7 @@ def load_or_compute_global_importances(
         gradients = torch.load(importances_path, map_location=device)
     else:
         gradients = concept_explainer.concept_output_gradient(
-            inputs=validation_inputs,
+            inputs=validation_activations,
             concepts_x_gradients=True,
             batch_size=batch_size,
         )
@@ -657,7 +657,7 @@ def prepare_concept_explanation_resources(
     if method_name != "NeuronsAs":
         activations = load_or_compute_activations(
             splitter=splitter,
-            train_inputs=train_inputs,
+            inputs=train_inputs,
             activations_path=save_root / "activations.pt",
             device=device,
         )
@@ -684,9 +684,15 @@ def prepare_concept_explanation_resources(
         device=device,
         batch_size=batch_size,
     )
+    validation_activations = load_or_compute_activations(
+        splitter=splitter,
+        inputs=validation_inputs,
+        activations_path=save_root / "validation_activations.pt",
+        device=device,
+    )
     global_importances = load_or_compute_global_importances(
         concept_explainer=concept_explainer,
-        validation_inputs=validation_inputs,
+        validation_activations=validation_activations,
         concept_dir=concept_dir,
         device=device,
         batch_size=batch_size,
@@ -710,8 +716,13 @@ def compute_local_concept_explanation(
     nb_learning_samples: int,
 ) -> LocalConceptExplanation:
     # Only the learning-phase samples are used to build local concept explanations.
+    local_activations = (
+        global_explanation.concept_explainer.model_with_split_points.get_activations(
+            local_inputs[:nb_learning_samples],
+        )
+    )
     local_importances = global_explanation.concept_explainer.concept_output_gradient(
-        inputs=local_inputs[:nb_learning_samples],  # type: ignore
+        inputs=local_activations,
         concepts_x_gradients=True,
     )
     local_importances = [
@@ -729,7 +740,7 @@ def compute_local_concept_explanation(
 def compute_and_cache_all_local_importances(
     *,
     concept_explainer,
-    test_inputs: list[str],
+    test_activations: "torch.Tensor",
     concept_dir: Path,
     batch_size: int = 64,
 ) -> list[torch.Tensor]:
@@ -746,11 +757,11 @@ def compute_and_cache_all_local_importances(
         print(f"  Local importances already cached: {cache_path}")
         return torch.load(cache_path, map_location="cpu")
 
-    print(f"  Computing local importances for {len(test_inputs)} test samples...")
+    print(f"  Computing local importances for {len(test_activations)} test samples...")
     raw_importances = concept_explainer.concept_output_gradient(
-        inputs=test_inputs,
+        inputs=test_activations,
         concepts_x_gradients=True,
-        batch_size=batch_size,
+        batch_size=batch_size * 8,
     )
     # Squeeze the class dimension (same as compute_local_concept_explanation).
     all_local_importances = [imp.squeeze(1) for imp in raw_importances]
@@ -826,13 +837,9 @@ def load_concept_explanation_resources(
     # Load interpretations.
     # Determine interpretation filename from config.
     if interpretation_name == "TopKInputs":
-        # Check for BIOS-style topk_words filename first, then standard.
-        for fname in ("topk_interpretations.json", "topk_interpretations.json"):
-            interp_path = concept_dir / fname
-            if interp_path.exists():
-                break
-        else:
-            raise FileNotFoundError(f"TopK interpretations not found in {concept_dir}.")
+        interp_path = concept_dir / "topk_interpretations.json"
+        if not interp_path.exists():
+            raise FileNotFoundError(f"TopK interpretations not found at {interp_path}.")
     elif interpretation_name == "LLMLabels":
         interp_path = concept_dir / "llm_interpretations.json"
         if not interp_path.exists():
@@ -915,9 +922,17 @@ def build_concept_resources(
         batch_size=batch_size,
     )
 
+    from utils.data import load_or_compute_activations
+
+    test_activations = load_or_compute_activations(
+        splitter=global_explanation.concept_explainer.model_with_split_points,
+        inputs=test_inputs,
+        activations_path=save_root / "test_activations.pt",
+        device=device,
+    )
     compute_and_cache_all_local_importances(
         concept_explainer=global_explanation.concept_explainer,
-        test_inputs=test_inputs,
+        test_activations=test_activations,
         concept_dir=global_explanation.concept_dir,
         batch_size=batch_size,
     )
