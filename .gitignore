@@ -215,3 +215,5 @@ quick_test.ipynb
 setup_cluster.sh
 LaTeX-Simulatability-Shortcut
 
+
+test_gpu.sbatch
