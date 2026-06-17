@@ -77,7 +77,7 @@ def compute_importances(
         concepts_x_gradients=True,
         batch_size=batch_size * 8,
     )
-    return [concept_explainer.__normalize_gradients(g) for g in gradients]
+    return [concept_explainer._normalize_gradients(g) for g in gradients]
 
 
 SYSTEM_PROMPT = """You are a meticulous AI researcher conducting an important investigation into patterns found in language.
