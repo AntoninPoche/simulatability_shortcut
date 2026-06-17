@@ -212,4 +212,6 @@ data/
 quick_test.ipynb
 
 # LaTeX report
+setup_cluster.sh
 LaTeX-Simulatability-Shortcut
+
