@@ -21,7 +21,7 @@ Forked from [contrastive_concepts](https://github.com/AntoninPoche/contrastive_c
 scripts/
   make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse); builds concept artifacts if missing
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
-  local_llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
+  llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
 
 utils/                        # Shared library package
   __init__.py
@@ -77,16 +77,16 @@ python scripts/make_prompts_old_consim.py GE seminmf
 **Score prompts with local LLM**:
 
 ```bash
-python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
-python scripts/local_llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
-python scripts/local_llm_scoring.py qwen3.5-9b --rescore-specification old_consim  # append corrected old-ConSim scores
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
+python scripts/llm_scoring.py qwen3.5-9b --rescore-specification old_consim  # append corrected old-ConSim scores
 ```
 
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
 ```bash
 ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
-./sequence.sh scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
+./sequence.sh scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
 **Compile paper** (from LaTeX directory):
@@ -141,7 +141,7 @@ Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, 
 
 Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place)
 
-### `local_llm_scoring.py`
+### `llm_scoring.py`
 
 Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, all `data/prompts/*.jsonl` files are scored in one process with one judge-model load. Optional: `--thinking`, `--max-new-tokens`, `--batch-size`, `--device`, `--rescore-specification` (force appending fresh rows for `new_consim` or `old_consim` keys already present in the score CSV)
 
@@ -162,7 +162,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
 - **Early-exit optimization**: `make_prompts.py` computes all expected output keys before importing torch/interpreto/transformers or loading data/models. If all entries already exist in the output JSONL, the script exits immediately (no model loading overhead).
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
-- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `local_llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. Use `--rescore-specification old_consim` after refreshing old-ConSim prompts to append corrected rows without rerunning new-ConSim.
+- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. Use `--rescore-specification old_consim` after refreshing old-ConSim prompts to append corrected rows without rerunning new-ConSim.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
 - **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
 - **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.

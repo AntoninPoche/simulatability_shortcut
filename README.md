@@ -33,8 +33,8 @@ CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts
 Scoring commands:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/BIOS_concepts.jsonl
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/BIOS_old_consim.jsonl
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_concepts.jsonl
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_old_consim.jsonl
 ```
 
 Use the same scoring pattern for `RT`, `AG`, and `IMDB` prompt files.
@@ -77,7 +77,7 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT ne
 6. Score one small prompt file with the intended judge:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/RT_concepts.jsonl
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_concepts.jsonl
 ```
 
 7. Smoke-test the grid runner:
@@ -94,7 +94,7 @@ Only launch the full grid after these checks pass or the failures are understood
 | --- | --- |
 | `scripts/make_prompts.py` | Generate new ConSim prompts for concepts, rationales, or attributions |
 | `scripts/make_prompts_old_consim.py` | Generate old ConSim prompts for concept explanations |
-| `scripts/local_llm_scoring.py` | Score prompt JSONL files with a local Hugging Face LLM judge |
+| `scripts/llm_scoring.py` | Score prompt JSONL files with a local Hugging Face LLM judge |
 | `sequence.sh` | Run a cartesian product over comma-separated CLI arguments |
 
 ## Output Files
@@ -121,3 +121,14 @@ data/{model_name}/concept_models/{method}_nc{nb_concepts}/
 ## Notes
 
 Use the existing `.venv` for Python commands. Use `CUDA_VISIBLE_DEVICES=1` to target the second physical GPU; inside the process this is exposed as `cuda`.
+
+
+## On cluster
+
+```bash
+sbatch my_run.sbatch                                      # launch one normal batch job
+sbatch --array=1-8%8 manifest.sbatch manifests/file.tsv   # launch an array from a manifest
+squeue -u $USER                                           # see queued/running jobs
+tail -f data/logs/<job_name>_<jobid>.out                  # follow stdout log
+scancel <jobid>                                           # cancel a job or array
+```

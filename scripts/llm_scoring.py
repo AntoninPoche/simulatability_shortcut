@@ -11,9 +11,9 @@ Handles two modes automatically:
 
 Usage examples::
 
-    python scripts/local_llm_scoring.py Qwen/Qwen3-0.6B
-    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
-    python scripts/local_llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl
+    python scripts/llm_scoring.py Qwen/Qwen3-0.6B
+    python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+    python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl
 """
 
 from __future__ import annotations
