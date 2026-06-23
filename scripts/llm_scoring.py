@@ -334,6 +334,30 @@ def score_prompt_group_old(
     return score / len(expected_answers)
 
 
+def old_consim_max_new_tokens(
+    expected_answers: list[str],
+    user_max_new_tokens: int,
+) -> int:
+    """Generation budget for old-ConSim's all-at-once response.
+
+    Old ConSim expects one ``Sample_N: <class_label>\\n`` line per evaluation
+    sample. The default ``--max-new-tokens`` (32) is calibrated for new ConSim
+    (single-token answer) and silently caps old-ConSim scores: the model gets
+    truncated after ~4-5 predictions, capping scores at ~0.5 even when the
+    judge would otherwise answer correctly.
+
+    Rough per-line cost: ``"Sample_NN: "`` is ~5 tokens, the label is bounded
+    by ``ceil(len(label) / 3)`` tokens for typical BPE tokenizers (one token
+    per ~3-4 chars), and we add 1 for the newline. We then add a 32-token
+    slack for any preamble the model might emit and respect the user override
+    if it is larger.
+    """
+    longest_label_chars = max((len(answer) for answer in expected_answers), default=0)
+    per_line_tokens = 5 + (longest_label_chars + 2) // 3 + 1  # prefix + label + newline
+    required = per_line_tokens * len(expected_answers) + 32
+    return max(user_max_new_tokens, required)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -412,13 +436,23 @@ def main() -> None:
             # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
             is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
 
+            # Old ConSim must emit one "Sample_N: class" line per evaluation
+            # sample in a single response, so the default --max-new-tokens
+            # (calibrated for new ConSim's one-token answer) caps scores at
+            # ~0.5. Auto-scale the budget for old-ConSim prompts.
+            max_new_tokens = (
+                old_consim_max_new_tokens(expected_answers, args.max_new_tokens)
+                if is_old_consim
+                else args.max_new_tokens
+            )
+
             answers = generate_answers(
                 model=model,
                 tokenizer=tokenizer,
                 system_prompt=prompt_group["system_prompt"],
                 user_prompts=user_prompts,
                 thinking=args.thinking,
-                max_new_tokens=args.max_new_tokens,
+                max_new_tokens=max_new_tokens,
                 batch_size=args.batch_size,
             )
 
