@@ -242,6 +242,7 @@ class RationalesSimulatability(AutomatedSimulatability):
         nb_learning_samples: int,
         *,
         rationales: list[str] | None = None,
+        class_ids: list[int] | None = None,
     ) -> tuple[str, list[str], list[str]]:
         """
         Build the prompts needed to run a RationalesSimulatability evaluation.
@@ -258,8 +259,12 @@ class RationalesSimulatability(AutomatedSimulatability):
             prompt_type=resolved_setting,
         )
 
-        # Extract classes present in predictions
-        classes_ids = sorted(corresponding_predictions.unique().tolist())
+        # Render the active class subset, not only classes present in predictions.
+        classes_ids = (
+            sorted(int(class_id) for class_id in class_ids)
+            if class_ids is not None
+            else sorted(corresponding_predictions.unique().tolist())
+        )
         classes = {class_id: self.classes[class_id] for class_id in classes_ids}
 
         # Render prompts

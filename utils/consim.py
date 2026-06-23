@@ -461,14 +461,15 @@ class ConSim(AutomatedSimulatability):
                 "The most important concepts and their importance for each class are:\n"
                 + "\n".join(
                     [
-                        f"\t{class_name}: {
+                        "\t{}: {}".format(
+                            class_name,
                             ConSim._concepts_to_string(
                                 global_importances[class_index],
                                 concepts_interpretation,
                                 top_k=top_k,
                                 threshold=importance_threshold,
-                            )
-                        }"
+                            ),
+                        )
                         for class_index, class_name in classes.items()
                     ]
                 )
@@ -639,6 +640,7 @@ class ConSim(AutomatedSimulatability):
         concepts_interpretation: dict[int, str],
         global_importances: torch.Tensor,
         local_importances: list[torch.Tensor] | None = None,
+        class_ids: list[int] | None = None,
         top_k: int = 5,
         importance_threshold: float = 0.05,
     ) -> tuple[str, list[str], list[str]]:
@@ -646,7 +648,7 @@ class ConSim(AutomatedSimulatability):
         Build the prompts needed to run a ConSim evaluation.
 
         It resolves the chosen prompt preset, validates all inputs, filters class-dependent
-        artifacts to the classes that actually appear in `corresponding_predictions`, and delegates
+        artifacts to the active class subset, and delegates
         the final text rendering to `_setting_to_prompt`.
 
         The returned prompts follow the ConSim structure:
@@ -675,6 +677,8 @@ class ConSim(AutomatedSimulatability):
             local_importances: list[torch.Tensor] | None
                 Optional local concept importances. Required by settings that expose local concepts.
                 Each entry must have shape `(len(self.classes), nb_concepts)`.
+            class_ids: list[int] | None
+                Active class ids to render. Defaults to the classes present in predictions.
             top_k: int
                 Maximum number of concepts to inspect per rendered explanation.
             importance_threshold: float
@@ -692,8 +696,6 @@ class ConSim(AutomatedSimulatability):
             ValueError
                 If the chosen setting is incompatible with the provided inputs.
 
-        Notes:
-            Only classes present in `corresponding_predictions` are rendered into the prompt.
         """
         setting = ConSim._resolve_prompt_setting(setting)
 
@@ -709,8 +711,13 @@ class ConSim(AutomatedSimulatability):
             nb_learning_samples=nb_learning_samples,
         )
 
-        # extract the classes present in the predictions or the gold labels
-        classes_ids = sorted(corresponding_predictions.unique().tolist())
+        # Render the active class subset, not only classes that happened to appear
+        # in the sampled model predictions.
+        classes_ids = (
+            sorted(int(class_id) for class_id in class_ids)
+            if class_ids is not None
+            else sorted(corresponding_predictions.unique().tolist())
+        )
         classes = {class_id: self.classes[class_id] for class_id in classes_ids}
 
         # filter based on classes subset

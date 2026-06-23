@@ -19,6 +19,7 @@ Output: ``data/prompts/{dataset_abbrev}_old_consim.jsonl``
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import sys
 from pathlib import Path
@@ -124,6 +125,47 @@ def parse_seeds(seeds_str: str) -> list[int]:
         start, end = seeds_str.split("-")
         return list(range(int(start), int(end) + 1))
     return [int(s) for s in seeds_str.split(",")]
+
+
+def validate_expected_answers(
+    *,
+    key: str,
+    expected_answers: list[str],
+    classes_subset: list[int],
+) -> None:
+    if not expected_answers:
+        raise ValueError(f"Invalid prompt group {key}: no expected answers.")
+    if len(classes_subset) > 1 and len(set(expected_answers)) < 2:
+        raise ValueError(
+            f"Degenerate prompt group {key}: expected answers contain only "
+            f"{sorted(set(expected_answers))}. Check cached model predictions/local elements."
+        )
+
+
+def append_prompt_group_if_missing(
+    output_path: Path,
+    prompt_group: dict,
+    existing_keys: set[str],
+) -> bool:
+    """Append one prompt group, re-checking under a lock to avoid duplicate keys."""
+    key = prompt_group["key"]
+    lock_path = output_path.with_suffix(output_path.suffix + ".lock")
+    with open(lock_path, "w") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        try:
+            if output_path.exists():
+                for existing_group in iter_jsonl(output_path):
+                    if existing_group["key"] == key:
+                        existing_keys.add(key)
+                        return False
+
+            with open(output_path, "a") as handle:
+                json.dump(prompt_group, handle)
+                handle.write("\n")
+            existing_keys.add(key)
+            return True
+        finally:
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
 
 
 def has_non_finite_importances(tensors: list[torch.Tensor]) -> bool:
@@ -316,18 +358,16 @@ def main() -> None:
                             continue
 
                         if concept_importances_corrupted:
-                            with open(output_path, "a") as handle:
-                                json.dump(
-                                    {
-                                        "key": str_key,
-                                        "corrupted": True,
-                                        "corruption_reason": "non_finite_concept_importances",
-                                    },
-                                    handle,
-                                )
-                                handle.write("\n")
-                            existing_keys.add(str_key)
-                            total_new += 1
+                            if append_prompt_group_if_missing(
+                                output_path,
+                                {
+                                    "key": str_key,
+                                    "corrupted": True,
+                                    "corruption_reason": "non_finite_concept_importances",
+                                },
+                                existing_keys,
+                            ):
+                                total_new += 1
                             continue
 
                         # Use old ConSim's _generate_prompt (static method).
@@ -347,20 +387,23 @@ def main() -> None:
                         )
 
                         system_prompt, user_prompt = prompt
+                        validate_expected_answers(
+                            key=str_key,
+                            expected_answers=literal_model_predictions,
+                            classes_subset=classes_subset,
+                        )
 
-                        with open(output_path, "a") as handle:
-                            json.dump(
-                                {
-                                    "key": str_key,
-                                    "system_prompt": system_prompt,
-                                    "user_prompts": [user_prompt],
-                                    "expected_answers": literal_model_predictions,
-                                },
-                                handle,
-                            )
-                            handle.write("\n")
-                        existing_keys.add(str_key)
-                        total_new += 1
+                        if append_prompt_group_if_missing(
+                            output_path,
+                            {
+                                "key": str_key,
+                                "system_prompt": system_prompt,
+                                "user_prompts": [user_prompt],
+                                "expected_answers": literal_model_predictions,
+                            },
+                            existing_keys,
+                        ):
+                            total_new += 1
 
         print(f"  → {total_new} new prompt groups written.")
 

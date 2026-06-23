@@ -209,6 +209,57 @@ def get_local_elements_path(
     return save_root / f"local_elements_{suffix}_n{nb_samples}.json"
 
 
+def _validate_local_elements_payload(
+    payload: dict[str, Any],
+    *,
+    seed: int,
+    path: Path,
+    nb_samples: int,
+    classes_subset: list[int] | None,
+) -> None:
+    lengths = {
+        field: len(payload.get(field, []))
+        for field in ("indices", "texts", "labels", "predictions")
+    }
+    bad_lengths = {field: length for field, length in lengths.items() if length != nb_samples}
+    if bad_lengths:
+        raise ValueError(
+            f"Invalid cached local elements for seed {seed} in {path}: expected {nb_samples} "
+            f"items per field, got {bad_lengths}. Delete this cache after fixing the "
+            "underlying predictions and regenerate it."
+        )
+
+    nb_learning_samples = payload.get("nb_learning_samples")
+    if not isinstance(nb_learning_samples, int) or not 0 < nb_learning_samples < nb_samples:
+        raise ValueError(
+            f"Invalid cached local elements for seed {seed} in {path}: "
+            f"nb_learning_samples={nb_learning_samples!r}."
+        )
+
+    if classes_subset is None:
+        return
+
+    requested_classes = set(int(class_id) for class_id in classes_subset)
+    labels = [int(label) for label in payload.get("labels", [])]
+    predictions = [int(prediction) for prediction in payload.get("predictions", [])]
+
+    labels_outside_subset = sorted(set(labels) - requested_classes)
+    predictions_outside_subset = sorted(set(predictions) - requested_classes)
+    if labels_outside_subset or predictions_outside_subset:
+        raise ValueError(
+            f"Invalid cached local elements for seed {seed} in {path}: labels outside subset "
+            f"{labels_outside_subset}, predictions outside subset {predictions_outside_subset}."
+        )
+
+    missing_prediction_classes = sorted(requested_classes - set(predictions))
+    if missing_prediction_classes:
+        raise ValueError(
+            f"Invalid cached local elements for seed {seed} in {path}: selected predictions "
+            f"do not cover requested classes {missing_prediction_classes}. Delete this cache "
+            "after fixing the underlying predictions and regenerate it."
+        )
+
+
 def load_dataset_splits(dataset: str):
     import torch
     from datasets import load_dataset
@@ -371,6 +422,16 @@ def load_or_compute_local_elements(
         with open(path) as f:
             cached_payload = json.load(f)
 
+    for seed in seeds:
+        if str(seed) in cached_payload:
+            _validate_local_elements_payload(
+                cached_payload[str(seed)],
+                seed=seed,
+                path=path,
+                nb_samples=nb_samples,
+                classes_subset=classes_subset,
+            )
+
     missing_seeds = [seed for seed in seeds if str(seed) not in cached_payload]
     if missing_seeds:
         for seed in missing_seeds:
@@ -393,8 +454,24 @@ def load_or_compute_local_elements(
                 "predictions": selected_predictions.view(-1).tolist(),
                 "prompt_ids": list(range(len(selected_inputs) - split_index)),
             }
+            _validate_local_elements_payload(
+                cached_payload[str(seed)],
+                seed=seed,
+                path=path,
+                nb_samples=nb_samples,
+                classes_subset=classes_subset,
+            )
         with open(path, "w") as f:
             json.dump(cached_payload, f, indent=2)
             f.write("\n")
+
+    for seed in seeds:
+        _validate_local_elements_payload(
+            cached_payload[str(seed)],
+            seed=seed,
+            path=path,
+            nb_samples=nb_samples,
+            classes_subset=classes_subset,
+        )
 
     return {seed: cached_payload[str(seed)] for seed in seeds}

@@ -278,6 +278,7 @@ class AttrSim(AutomatedSimulatability):
         nb_learning_samples: int,
         *,
         corresponding_attribution: list[AttributionOutput],
+        class_ids: list[int] | None = None,
     ) -> tuple[str, list[str], list[str]]:
         """
         Build AttrSim system and user prompts from selected examples.
@@ -306,7 +307,11 @@ class AttrSim(AutomatedSimulatability):
             corresponding_attribution=corresponding_attribution,
         )
 
-        classes_ids = sorted(corresponding_predictions.unique().tolist())
+        classes_ids = (
+            sorted(int(class_id) for class_id in class_ids)
+            if class_ids is not None
+            else sorted(corresponding_predictions.unique().tolist())
+        )
         classes = {class_id: self.classes[class_id] for class_id in classes_ids}
 
         if setting.anonymize_classes:

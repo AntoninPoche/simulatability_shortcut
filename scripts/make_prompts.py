@@ -22,6 +22,7 @@ Existing keys in the output file are skipped (append-only, resumable).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import itertools
 import json
 import sys
@@ -157,6 +158,51 @@ def parse_seeds(seeds_str: str) -> list[int]:
         start, end = seeds_str.split("-")
         return list(range(int(start), int(end) + 1))
     return [int(s) for s in seeds_str.split(",")]
+
+
+def validate_prompt_group(
+    *,
+    key: str,
+    user_prompts: list[str],
+    expected_answers: list[str],
+    classes_subset: list[int],
+) -> None:
+    if len(user_prompts) != len(expected_answers):
+        raise ValueError(
+            f"Invalid prompt group {key}: {len(user_prompts)} user prompts but "
+            f"{len(expected_answers)} expected answers."
+        )
+    if len(classes_subset) > 1 and len(set(expected_answers)) < 2:
+        raise ValueError(
+            f"Degenerate prompt group {key}: expected answers contain only "
+            f"{sorted(set(expected_answers))}. Check cached model predictions/local elements."
+        )
+
+
+def append_prompt_group_if_missing(
+    output_path: Path,
+    prompt_group: dict,
+    existing_keys: set[str],
+) -> bool:
+    """Append one prompt group, re-checking under a lock to avoid duplicate keys."""
+    key = prompt_group["key"]
+    lock_path = output_path.with_suffix(output_path.suffix + ".lock")
+    with open(lock_path, "w") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        try:
+            if output_path.exists():
+                for existing_group in iter_jsonl(output_path):
+                    if existing_group["key"] == key:
+                        existing_keys.add(key)
+                        return False
+
+            with open(output_path, "a") as handle:
+                json.dump(prompt_group, handle)
+                handle.write("\n")
+            existing_keys.add(key)
+            return True
+        finally:
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
 
 
 def generate_prompts_for_subset(
@@ -353,6 +399,7 @@ def generate_prompts_for_subset(
                         "concepts_interpretation": concept_resources.concepts_interpretation,
                         "global_importances": concept_resources.global_importances,
                         "local_importances": local_explanation.local_importances,
+                        "class_ids": classes_subset,
                     }
                 elif explanation_family == "rationales":
                     method_name = args.llm_model if not is_baseline else "baseline"
@@ -360,6 +407,7 @@ def generate_prompts_for_subset(
                     interpretation_key = None
                     construct_prompt_kwargs = {
                         "rationales": local_rationales,
+                        "class_ids": classes_subset,
                     }
                 else:
                     method_name = args.method if not is_baseline else "baseline"
@@ -367,6 +415,7 @@ def generate_prompts_for_subset(
                     interpretation_key = None
                     construct_prompt_kwargs = {
                         "corresponding_attribution": local_attributions,
+                        "class_ids": classes_subset,
                     }
 
                 str_key = str(
@@ -386,18 +435,16 @@ def generate_prompts_for_subset(
                     continue
 
                 if explanation_family == "concepts" and concept_importances_corrupted:
-                    with open(output_path, "a") as handle:
-                        json.dump(
-                            {
-                                "key": str_key,
-                                "corrupted": True,
-                                "corruption_reason": "non_finite_concept_importances",
-                            },
-                            handle,
-                        )
-                        handle.write("\n")
-                    existing_keys.add(str_key)
-                    new_prompts += 1
+                    if append_prompt_group_if_missing(
+                        output_path,
+                        {
+                            "key": str_key,
+                            "corrupted": True,
+                            "corruption_reason": "non_finite_concept_importances",
+                        },
+                        existing_keys,
+                    ):
+                        new_prompts += 1
                     continue
 
                 system_prompt, user_prompts, expected_answers = (
@@ -410,19 +457,23 @@ def generate_prompts_for_subset(
                         **construct_prompt_kwargs,
                     )
                 )
-                with open(output_path, "a") as handle:
-                    json.dump(
-                        {
-                            "key": str_key,
-                            "system_prompt": system_prompt,
-                            "user_prompts": user_prompts,
-                            "expected_answers": expected_answers,
-                        },
-                        handle,
-                    )
-                    handle.write("\n")
-                existing_keys.add(str_key)
-                new_prompts += 1
+                validate_prompt_group(
+                    key=str_key,
+                    user_prompts=user_prompts,
+                    expected_answers=expected_answers,
+                    classes_subset=classes_subset,
+                )
+                if append_prompt_group_if_missing(
+                    output_path,
+                    {
+                        "key": str_key,
+                        "system_prompt": system_prompt,
+                        "user_prompts": user_prompts,
+                        "expected_answers": expected_answers,
+                    },
+                    existing_keys,
+                ):
+                    new_prompts += 1
 
     return new_prompts
 

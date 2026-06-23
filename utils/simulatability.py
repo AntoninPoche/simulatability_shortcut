@@ -218,6 +218,23 @@ class AutomatedSimulatability:
             class_wise_good_indices.append(good_indices[predictions[good_indices] == c])
             class_wise_miss_indices.append(miss_indices[predictions[miss_indices] == c])
 
+        missing_good_classes = [
+            int(c)
+            for c, indices_for_class in zip(class_ids, class_wise_good_indices)
+            if len(indices_for_class) < nb_good_per_class
+        ]
+        missing_miss_classes = [
+            int(c)
+            for c, indices_for_class in zip(class_ids, class_wise_miss_indices)
+            if len(indices_for_class) < nb_miss_per_class
+        ]
+        if missing_good_classes or missing_miss_classes:
+            raise ValueError(
+                "Not enough per-class model predictions to build a balanced simulatability sample. "
+                f"Missing good predictions for classes {missing_good_classes}; "
+                f"missing miss predictions for classes {missing_miss_classes}."
+            )
+
         selected_good_indices = torch.cat([c[:nb_good_per_class] for c in class_wise_good_indices])[:nb_good]
         selected_miss_indices = torch.cat([c[:nb_miss_per_class] for c in class_wise_miss_indices])[:nb_miss]
 
@@ -240,6 +257,22 @@ class AutomatedSimulatability:
         # ------------------------------------------------------------------------------------------
         # Concatenate, shuffle indices, and return indexed elements
         indices = torch.cat([selected_good_indices, selected_miss_indices])
+        if len(indices) != nb_samples:
+            raise ValueError(
+                f"Expected to select {nb_samples} samples, but selected {len(indices)}. "
+                "This usually means at least one requested class is absent from the model predictions."
+            )
+
+        selected_predictions = predictions[indices]
+        missing_prediction_classes = sorted(
+            set(int(c) for c in class_ids)
+            - set(int(c) for c in selected_predictions.view(-1).tolist())
+        )
+        if missing_prediction_classes:
+            raise ValueError(
+                "Selected examples do not cover all requested predicted classes. "
+                f"Missing classes: {missing_prediction_classes}."
+            )
 
         # shuffle the indices
         indices = indices[torch.randperm(len(indices))]

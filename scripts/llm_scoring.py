@@ -39,6 +39,9 @@ from utils.data import iter_jsonl, LLM_MODELS, resolve_llm_model
 
 PROMPT_DIR = Path("data/prompts")
 SAMPLE_ID_RE = re.compile(r"\bSample_(\d+)\s*:")
+CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
+BARE_INT_RE = re.compile(r"^\d+$")
+SCI_TECH_RE = re.compile(r"\bscience\s+(?:and|&)\s+technology\b", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -198,13 +201,37 @@ def normalize_label_text(text: str | None) -> str | None:
     return processed if processed else None
 
 
+def anonymized_class_id(text: str | None, *, allow_bare_int: bool = False) -> int | None:
+    """Return the numeric id for labels like Class_3, Class3, or optionally 3."""
+    text_norm = normalize_label_text(text)
+    if text_norm is None:
+        return None
+    match = CLASS_LABEL_RE.fullmatch(text_norm)
+    if match is not None:
+        return int(match.group(1))
+    if allow_bare_int and BARE_INT_RE.fullmatch(text_norm):
+        return int(text_norm)
+    return None
+
+
 def prediction_matches(predicted: str | None, expected: str) -> bool:
     """Case-insensitive exact match after lightweight label cleanup."""
     predicted_norm = normalize_label_text(predicted)
     expected_norm = normalize_label_text(expected)
     if predicted_norm is None or expected_norm is None:
         return False
-    return predicted_norm.lower() == expected_norm.lower()
+    if predicted_norm.lower() == expected_norm.lower():
+        return True
+
+    expected_class_id = anonymized_class_id(expected_norm)
+    predicted_class_id = anonymized_class_id(
+        predicted_norm,
+        allow_bare_int=expected_class_id is not None,
+    )
+    if expected_class_id is not None and predicted_class_id == expected_class_id:
+        return True
+
+    return label_pattern(expected_norm).fullmatch(predicted_norm) is not None
 
 
 def extract_sample_ids(text: str) -> list[int]:
@@ -214,10 +241,66 @@ def extract_sample_ids(text: str) -> list[int]:
 
 def label_pattern(label: str) -> re.Pattern[str]:
     """Build a conservative pattern for labels embedded in generated text."""
+    label_parts = [part for part in re.split(r"[^A-Za-z0-9]+", label) if part]
+    if label_parts:
+        body = r"[\s_/+-]*".join(re.escape(part) for part in label_parts)
+    else:
+        body = re.escape(label)
     return re.compile(
-        rf"(?<![A-Za-z0-9_/+-]){re.escape(label)}(?![A-Za-z0-9_/+-])",
+        rf"(?<![A-Za-z0-9]){body}(?![A-Za-z0-9])",
         re.IGNORECASE,
     )
+
+
+def match_expected_label(candidate: str, expected_answers: list[str]) -> str | None:
+    """Return the expected label matched by a raw candidate span, if any."""
+    candidate_norm = normalize_label_text(candidate)
+    if candidate_norm is None:
+        return None
+
+    for expected in expected_answers:
+        if prediction_matches(candidate_norm, expected):
+            return expected
+
+    expected_lower = {answer.lower() for answer in expected_answers}
+    lowered = candidate_norm.lower()
+    if "pos" in expected_lower and label_pattern("positive").search(lowered):
+        return "pos"
+    if "neg" in expected_lower and label_pattern("negative").search(lowered):
+        return "neg"
+
+    for expected in expected_answers:
+        if label_pattern(expected).search(candidate_norm):
+            return expected
+        if expected.lower() == "sci/tech" and SCI_TECH_RE.search(candidate_norm):
+            return expected
+
+    return None
+
+
+def ordered_prediction_candidates(text: str) -> list[str]:
+    """Candidate spans from most to least likely final-label locations."""
+    processed = text.strip().replace("\n", " ")
+    candidates: list[str] = []
+    if ":" in processed:
+        candidates.append(processed.rsplit(":", 1)[1])
+        candidates.append(processed.split(":", 1)[1])
+
+    tokens = processed.split()
+    if tokens:
+        candidates.append(tokens[-1])
+        candidates.append(tokens[0])
+        candidates.extend(reversed(tokens))
+    candidates.append(processed)
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        candidate_key = candidate.strip().lower()
+        if candidate_key and candidate_key not in seen:
+            deduped.append(candidate)
+            seen.add(candidate_key)
+    return deduped
 
 
 def extract_old_consim_prediction(
@@ -234,33 +317,28 @@ def extract_old_consim_prediction(
         candidates.append(prediction_text.split(":", 1)[1])
     candidates.append(prediction_text)
 
-    expected_lower = {answer.lower() for answer in expected_answers}
     for candidate in candidates:
-        candidate_norm = normalize_label_text(candidate)
-        if candidate_norm is None:
-            continue
-        for expected in expected_answers:
-            if prediction_matches(candidate_norm, expected):
-                return expected
-
-        lowered = candidate_norm.lower()
-        if "pos" in expected_lower and label_pattern("positive").search(lowered):
-            return "pos"
-        if "neg" in expected_lower and label_pattern("negative").search(lowered):
-            return "neg"
-
-        for expected in expected_answers:
-            if label_pattern(expected).search(candidate):
-                return expected
+        matched = match_expected_label(candidate, expected_answers)
+        if matched is not None:
+            return matched
 
     fallback = candidates[0].strip().replace("\n", " ").split(" ")[0]
     return normalize_label_text(fallback)
 
 
-def extract_prediction(text: str | None) -> str | None:
-    """Extract predicted token from raw output (last word)."""
+def extract_prediction(
+    text: str | None,
+    expected_answers: list[str] | None = None,
+) -> str | None:
+    """Extract a predicted label from raw new-ConSim output."""
     if text is None:
         return None
+    if expected_answers is not None:
+        for candidate in ordered_prediction_candidates(text):
+            matched = match_expected_label(candidate, expected_answers)
+            if matched is not None:
+                return matched
+
     processed = text.strip().replace("\n", " ").split(" ")[-1]
     return normalize_label_text(processed)
 
@@ -311,7 +389,7 @@ def score_prompt_group_new(answers: list[str], expected_answers: list[str]) -> f
     score = 0
     failed = 0
     for answer, expected in zip(answers, expected_answers, strict=True):
-        predicted = extract_prediction(answer)
+        predicted = extract_prediction(answer, expected_answers)
         if not prediction_matches(predicted, expected):
             failed += 1
             continue
