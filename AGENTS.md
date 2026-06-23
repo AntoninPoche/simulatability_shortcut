@@ -22,6 +22,7 @@ scripts/
   make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse); builds concept artifacts if missing
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
+  drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
 
 utils/                        # Shared library package
   __init__.py
@@ -79,8 +80,20 @@ python scripts/make_prompts_old_consim.py GE seminmf
 ```bash
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
-python scripts/llm_scoring.py qwen3.5-9b --rescore-specification old_consim  # append corrected old-ConSim scores
 ```
+
+**Drop rows from a score CSV** (to force re-scoring after regenerating prompts):
+
+```bash
+# Drop every RT row (both specifications) before re-running llm_scoring.py.
+python scripts/drop_score_rows.py data/consim_Qwen_Qwen3.5-9B.csv dataset=RT
+python scripts/drop_score_rows.py data/consim_meta-llama_Llama-3.2-3B-Instruct.csv dataset=RT
+
+# Only drop the old_consim RT rows.
+python scripts/drop_score_rows.py data/consim_Qwen_Qwen3.5-9B.csv dataset=RT specification=old_consim
+```
+
+Writes `<csv>.bak` first unless `--no-backup` is given.
 
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
@@ -143,7 +156,7 @@ Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `p
 
 ### `llm_scoring.py`
 
-Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, all `data/prompts/*.jsonl` files are scored in one process with one judge-model load. Optional: `--thinking`, `--max-new-tokens`, `--batch-size`, `--device`, `--rescore-specification` (force appending fresh rows for `new_consim` or `old_consim` keys already present in the score CSV)
+Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, all `data/prompts/*.jsonl` files are scored in one process with one judge-model load. Optional: `--thinking`, `--max-new-tokens`, `--batch-size`, `--device`. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 
 ## Key Dependencies
 
@@ -162,7 +175,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
 - **Early-exit optimization**: `make_prompts.py` computes all expected output keys before importing torch/interpreto/transformers or loading data/models. If all entries already exist in the output JSONL, the script exits immediately (no model loading overhead).
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
-- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. Use `--rescore-specification old_consim` after refreshing old-ConSim prompts to append corrected rows without rerunning new-ConSim.
+- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
 - **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
 - **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.
