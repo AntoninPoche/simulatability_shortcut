@@ -9,6 +9,8 @@ rsync -az \
   --include "*.csv" \
   --include "*.jsonl" \
   --include "local_elements*.json" \
+  --include "*.err" \
+  --include "*.out" \
   --exclude "*" \
   jz:/lustre/fswork/projects/rech/lxa/ung58ii/simulatability_shortcut/data/ \
   ./data/

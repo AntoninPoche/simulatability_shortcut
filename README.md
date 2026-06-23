@@ -127,7 +127,7 @@ Use the existing `.venv` for Python commands. Use `CUDA_VISIBLE_DEVICES=1` to ta
 
 ```bash
 sbatch my_run.sbatch                                      # launch one normal batch job
-sbatch --array=1-N%8 manifest.sbatch manifests/file.tsv   # launch an array from a manifest
+sbatch --job-name=<job_name> --array=1-N manifest.sbatch manifests/file.tsv   # launch an array from a manifest
 squeue -u $USER                                           # see queued/running jobs
 tail -f data/logs/<job_name>_<jobid>.out                  # follow stdout log
 scancel <jobid>                                           # cancel a job or array

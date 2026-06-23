@@ -146,8 +146,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=512,
-        help="Batch size for model inference (default: 64).",
+        default=96,
+        help="Batch size for model inference (default: 96).",
     )
     return parser.parse_args()
 
