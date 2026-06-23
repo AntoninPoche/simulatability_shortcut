@@ -9,4 +9,5 @@ rsync -az --delete --partial \
   --exclude ".pytest_cache/" \
   --exclude ".ruff_cache/" \
   --exclude "data/" \
+  --exclude "notebooks/" \
   ./ jz:/lustre/fswork/projects/rech/lxa/ung58ii/simulatability_shortcut/

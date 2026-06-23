@@ -2,7 +2,7 @@
 #SBATCH --job-name=manifest
 #SBATCH -A lxa@h100
 #SBATCH -C h100
-#SBATCH --qos=qos_gpu_h100-dev
+#SBATCH --qos=qos_gpu_h100-t3
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
