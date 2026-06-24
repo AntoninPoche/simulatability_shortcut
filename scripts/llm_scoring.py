@@ -42,6 +42,7 @@ SAMPLE_ID_RE = re.compile(r"\bSample_(\d+)\s*:")
 CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
 BARE_INT_RE = re.compile(r"^\d+$")
 SCI_TECH_RE = re.compile(r"\bscience\s+(?:and|&)\s+technology\b", re.IGNORECASE)
+CLASSES_LINE_RE = re.compile(r"^The classes are:\s*\[(.*)\]\s*$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -241,6 +242,16 @@ def prediction_matches(predicted: str | None, expected: str) -> bool:
     return label_pattern(expected_norm).fullmatch(predicted_norm) is not None
 
 
+def extract_allowed_labels(system_prompt: str) -> list[str]:
+    """Extract class labels from the prompt's explicit class list."""
+    for line in system_prompt.splitlines():
+        match = CLASSES_LINE_RE.match(line.strip())
+        if match is None:
+            continue
+        return [label.strip() for label in match.group(1).split(",") if label.strip()]
+    return []
+
+
 def extract_sample_ids(text: str) -> list[int]:
     """Extract old-ConSim sample ids from a prompt or response."""
     return [int(match.group(1)) for match in SAMPLE_ID_RE.finditer(text)]
@@ -312,7 +323,7 @@ def ordered_prediction_candidates(text: str) -> list[str]:
 
 def extract_old_consim_prediction(
     line: str,
-    expected_answers: list[str],
+    allowed_answers: list[str],
 ) -> str | None:
     """Extract a class label from one old-ConSim response line."""
     sample_match = SAMPLE_ID_RE.search(line)
@@ -325,26 +336,26 @@ def extract_old_consim_prediction(
     candidates.append(prediction_text)
 
     for candidate in candidates:
-        matched = match_expected_label(candidate, expected_answers)
+        matched = match_expected_label(candidate, allowed_answers)
         if matched is not None:
             return matched
 
-    fallback = candidates[0].strip().replace("\n", " ").split(" ")[0]
-    return normalize_label_text(fallback)
+    return None
 
 
 def extract_prediction(
     text: str | None,
-    expected_answers: list[str] | None = None,
+    allowed_answers: list[str] | None = None,
 ) -> str | None:
     """Extract a predicted label from raw new-ConSim output."""
     if text is None:
         return None
-    if expected_answers is not None:
+    if allowed_answers is not None:
         for candidate in ordered_prediction_candidates(text):
-            matched = match_expected_label(candidate, expected_answers)
+            matched = match_expected_label(candidate, allowed_answers)
             if matched is not None:
                 return matched
+        return None
 
     processed = text.strip().replace("\n", " ").split(" ")[-1]
     return normalize_label_text(processed)
@@ -353,6 +364,7 @@ def extract_prediction(
 def parse_old_consim_response(
     response: str,
     expected_answers: list[str],
+    allowed_answers: list[str] | None = None,
     sample_ids: list[int] | None = None,
 ) -> list[str | None]:
     """
@@ -360,6 +372,7 @@ def parse_old_consim_response(
     Expected format: "Sample_0: class_a\\nSample_1: class_b\\n..."
     """
     expected_length = len(expected_answers)
+    labels_to_match = allowed_answers if allowed_answers is not None else expected_answers
     if not response:
         return [None] * expected_length
 
@@ -373,7 +386,7 @@ def parse_old_consim_response(
         if sample_match is None:
             continue
         predictions_by_sample_id[int(sample_match.group(1))] = (
-            extract_old_consim_prediction(line, expected_answers)
+            extract_old_consim_prediction(line, labels_to_match)
         )
 
     if sample_ids and any(
@@ -382,7 +395,7 @@ def parse_old_consim_response(
         return [predictions_by_sample_id.get(sample_id) for sample_id in sample_ids]
 
     predictions = [
-        extract_old_consim_prediction(line, expected_answers) for line in lines
+        extract_old_consim_prediction(line, labels_to_match) for line in lines
     ]
     if len(predictions) >= expected_length:
         return predictions[-expected_length:]
@@ -391,12 +404,17 @@ def parse_old_consim_response(
     return predictions
 
 
-def score_prompt_group_new(answers: list[str], expected_answers: list[str]) -> float:
+def score_prompt_group_new(
+    answers: list[str],
+    expected_answers: list[str],
+    allowed_answers: list[str] | None = None,
+) -> float:
     """Score new ConSim mode: one answer per evaluation sample."""
     score = 0
     failed = 0
+    labels_to_match = allowed_answers if allowed_answers is not None else expected_answers
     for answer, expected in zip(answers, expected_answers, strict=True):
-        predicted = extract_prediction(answer, expected_answers)
+        predicted = extract_prediction(answer, labels_to_match)
         if not prediction_matches(predicted, expected):
             failed += 1
             continue
@@ -408,10 +426,16 @@ def score_prompt_group_old(
     answer: str,
     expected_answers: list[str],
     user_prompt: str | None = None,
+    allowed_answers: list[str] | None = None,
 ) -> float:
     """Score old ConSim mode: parse multi-line response."""
     sample_ids = extract_sample_ids(user_prompt) if user_prompt is not None else None
-    predictions = parse_old_consim_response(answer, expected_answers, sample_ids)
+    predictions = parse_old_consim_response(
+        answer,
+        expected_answers,
+        allowed_answers=allowed_answers,
+        sample_ids=sample_ids,
+    )
     score = sum(
         int(prediction_matches(pred, expected))
         for pred, expected in zip(predictions, expected_answers, strict=True)
@@ -529,6 +553,9 @@ def main() -> None:
                 for prompt_group in prompt_groups_to_score:
                     user_prompts = prompt_group["user_prompts"]
                     expected_answers = prompt_group["expected_answers"]
+                    allowed_answers = extract_allowed_labels(prompt_group["system_prompt"])
+                    if not allowed_answers:
+                        allowed_answers = expected_answers
 
                     # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
                     is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
@@ -556,10 +583,12 @@ def main() -> None:
 
                     if is_old_consim:
                         accuracy = score_prompt_group_old(
-                            answers[0], expected_answers, user_prompts[0]
+                            answers[0], expected_answers, user_prompts[0], allowed_answers
                         )
                     else:
-                        accuracy = score_prompt_group_new(answers, expected_answers)
+                        accuracy = score_prompt_group_new(
+                            answers, expected_answers, allowed_answers
+                        )
 
                     # Append score row.
                     writer.writerow(
