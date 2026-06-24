@@ -66,6 +66,7 @@ python scripts/make_prompts.py concepts GE seminmf
 python scripts/make_prompts.py concepts BIOS ica --nb-concepts-ratio 2
 python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts RT neurons --interpretation topk
+python scripts/make_prompts.py concepts RT classes --interpretation topk  # interpretation is ignored; key uses None
 python scripts/make_prompts.py rationales BIOS
 python scripts/make_prompts.py rationales BIOS --llm-model qwen3.5-9b
 python scripts/make_prompts.py attributions GE saliency
@@ -100,7 +101,7 @@ Writes `<csv>.bak` first unless `--no-backup` is given.
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
 ```bash
-./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
+./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
 ./sequence.sh scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
@@ -119,7 +120,7 @@ Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consi
 | Axis | Values |
 | --- | --- |
 | Datasets | `BIOS`, `RT`, `AG`, `IMDB` |
-| Methods | `seminmf`, `ica`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons` |
+| Methods | `seminmf`, `ica`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
 | Samples per seed | `20` by default |
@@ -127,8 +128,8 @@ Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consi
 Prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
 ```
 
 Debug before larger runs:
@@ -150,11 +151,11 @@ After Phase 1 is debugged, extend to rationale, attribution, and concept simulat
 
 ### `make_prompts.py`
 
-Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`
+Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`.
 
 ### `make_prompts_old_consim.py`
 
-Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place)
+Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place). For `classes`, `--interpretation` is ignored and prompt keys store `None`.
 
 ### `llm_scoring.py`
 

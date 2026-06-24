@@ -214,7 +214,7 @@ def main() -> None:
     print(f"Dataset:         {dataset_name} ({args.dataset})")
     print(f"Model:           {model_name}")
     print(f"Method:          {args.method}")
-    print(f"Interpretation:  {args.interpretation}")
+    print(f"Interpretation:  {None if args.method == 'classes' else args.interpretation}")
     print(f"Seeds:           {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
     print(f"Output:          {output_path}")
     print()
@@ -239,8 +239,13 @@ def main() -> None:
     _, test_predictions = test_artifacts
 
     # Load pre-built concept resources (load-only, no interpreto needed).
-    nb_concepts = None if args.method == "neurons" else int(len(classes) * args.nb_concepts_ratio)
-    interpretation_key = args.interpretation
+    if args.method == "neurons":
+        nb_concepts = None
+    elif args.method == "classes":
+        nb_concepts = len(classes)
+    else:
+        nb_concepts = int(len(classes) * args.nb_concepts_ratio)
+    interpretation_key = None if args.method == "classes" else args.interpretation
     method_dir_name = CONCEPT_METHOD_NAMES[args.method]
     concept_resources = load_concept_explanation_resources(
         save_root=save_root,

@@ -296,6 +296,7 @@ def generate_prompts_for_subset(
             validation_inputs=args.validation_inputs,
             test_inputs=test_inputs,
             classes=classes,
+            test_predictions=test_predictions,
         )
     elif explanation_family == "rationales":
         # Rationale path: generate rationales for all samples used by any seed.
@@ -566,9 +567,11 @@ def main() -> None:
         nb_concepts = (
             None
             if args.method == "neurons"
+            else len(classes)
+            if args.method == "classes"
             else int(len(classes) * args.nb_concepts_ratio)
         )
-        interpretation_key = args.interpretation
+        interpretation_key = None if args.method == "classes" else args.interpretation
         method_for_key = CONCEPT_METHOD_NAMES[args.method]
     elif args.explanation_family == "rationales":
         prompt_type_abbrevs = RATIONALE_PROMPT_ABBREVS

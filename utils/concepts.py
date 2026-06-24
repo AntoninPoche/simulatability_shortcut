@@ -10,9 +10,10 @@ import torch
 from utils.registries import CONCEPT_METHOD_NAMES, INTERPRETATION_KEYS
 
 
-INTERPRETATION_FILENAMES: dict[str, str] = {
+INTERPRETATION_FILENAMES: dict[str | None, str] = {
     "llm": "llm_interpretations.json",
     "topk": "topk_interpretations.json",
+    None: "class_interpretations.json",
 }
 
 
@@ -226,7 +227,7 @@ class GlobalConceptExplanation(NamedTuple):
     concepts_interpretation: dict[int, str]
     global_importances: torch.Tensor
     method_name: str
-    interpretation_key: str
+    interpretation_key: str | None
     nb_concepts: int | None
     concept_dir: Path
 
@@ -641,6 +642,46 @@ def load_or_compute_global_importances(
     return gradients
 
 
+def build_classes_as_concepts_resources(
+    *,
+    save_root: Path,
+    classes: list[str],
+    test_predictions: torch.Tensor,
+) -> None:
+    """Cache the ClassesAsConcepts baseline artifacts.
+
+    This baseline has one concept per class. Concept labels are the class labels,
+    global importances are the class/concept identity matrix, and local
+    importances expose the same one-to-one mapping for every sample.
+    """
+    nb_classes = len(classes)
+    concept_dir = get_concept_dir(
+        save_root=save_root,
+        method_name="ClassesAs",
+        nb_concepts=nb_classes,
+    )
+    concept_dir.mkdir(parents=True, exist_ok=True)
+
+    concept_model_path = concept_dir / "concept_model.pt"
+    if not concept_model_path.exists():
+        torch.save({"method": "ClassesAsConcepts"}, concept_model_path)
+
+    interpretation_path = concept_dir / INTERPRETATION_FILENAMES[None]
+    if not interpretation_path.exists():
+        with open(interpretation_path, "w") as handle:
+            json.dump({str(i): label for i, label in enumerate(classes)}, handle)
+
+    identity = torch.eye(nb_classes)
+
+    importances_path = concept_dir / "importances.pt"
+    if not importances_path.exists():
+        torch.save(identity, importances_path)
+
+    local_importances_path = concept_dir / "all_local_importances.pt"
+    if not local_importances_path.exists():
+        torch.save([identity] * len(test_predictions), local_importances_path)
+
+
 def prepare_concept_explanation_resources(
     *,
     dataset_name: str | None,
@@ -808,7 +849,7 @@ def load_concept_explanation_resources(
     save_root: Path,
     method_name: str,
     nb_concepts: int | None,
-    interpretation_key: str,
+    interpretation_key: str | None,
     classes: list[str],
     device: str = "cpu",
 ) -> GlobalConceptExplanation:
@@ -940,6 +981,7 @@ def load_or_build_concept_resources(
     validation_inputs: list[str],
     test_inputs: list[str],
     classes: list[str],
+    test_predictions: torch.Tensor | None = None,
 ) -> GlobalConceptExplanation:
     """Load concept resources from cache, building them if missing.
 
@@ -949,7 +991,9 @@ def load_or_build_concept_resources(
     nb_concepts = int(len(classes) * args.nb_concepts_ratio)
     if args.method == "neurons":
         nb_concepts = None
-    interpretation_key = args.interpretation
+    elif args.method == "classes":
+        nb_concepts = len(classes)
+    interpretation_key = None if args.method == "classes" else args.interpretation
     method_dir_name = CONCEPT_METHOD_NAMES[args.method]
 
     try:
@@ -966,6 +1010,23 @@ def load_or_build_concept_resources(
         return resources
     except FileNotFoundError:
         pass
+
+    if args.method == "classes":
+        if test_predictions is None:
+            raise ValueError("test_predictions are required to build ClassesAsConcepts.")
+        print("  ClassesAsConcepts artifacts missing, building...")
+        build_classes_as_concepts_resources(
+            save_root=save_root,
+            classes=classes,
+            test_predictions=test_predictions,
+        )
+        return load_concept_explanation_resources(
+            save_root=save_root,
+            method_name=method_dir_name,
+            nb_concepts=nb_concepts,
+            interpretation_key=interpretation_key,
+            classes=classes,
+        )
 
     # Artifacts not cached — build them now.
     print(f"  Concept artifacts missing, building for {args.method}...")

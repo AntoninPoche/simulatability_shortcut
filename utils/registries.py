@@ -16,6 +16,7 @@ CONCEPT_METHOD_NAMES: dict[str, str] = {
     "batchtopk_sae": "BatchTopKSAE",
     "vanilla_sae": "VanillaSAE",
     "neurons": "NeuronsAs",
+    "classes": "ClassesAs",
 }
 
 INTERPRETATION_KEYS: tuple[str, ...] = ("topk", "llm")
