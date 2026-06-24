@@ -35,6 +35,7 @@ utils/                        # Shared library package
   simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
   rationales.py               # Rationale generation from local LLMs (Qwen)
   ratsim.py                   # Rationale-based prompt construction
+  plot.py                     # Plot helpers for score visualizations (new ConSim naming)
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
 generation_concept_tutorial.ipynb  # Interpreto concept tutorial, including BatchTopK SAE loss setup

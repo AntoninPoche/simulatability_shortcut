@@ -175,6 +175,83 @@ def plot_accuracies_violins(
     # Keep only prompt_types that ended up with data.
     plotted_prompt_types = [pt for pt in explanation_prompt_types if pt in distributions]
 
+    # Exact old_plot-style visual for the common case used in the notebook:
+    # one violin per method and prompt type, plus a black NoExplanation violin.
+    # In particular, keep Matplotlib's default violin body styling for methods
+    # (the old plot did not manually recolor those bodies), and only force
+    # NoExplanation to black.
+    if split_index is None:
+        has_baseline = any("NoExplanation" in d for d in distributions.values())
+        slot_keys = list(methods) + (["NoExplanation"] if has_baseline else [])
+        num_slots = len(slot_keys)
+        bar_width = 0.12
+        bars_index = np.arange(len(plotted_prompt_types))
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(18, 6))
+        else:
+            fig = ax.figure
+
+        handles, labels = [], []
+        for i, slot_key in enumerate(slot_keys):
+            values_per_group = [
+                distributions[pt].get(slot_key, {}).get(None, np.array([]))
+                for pt in plotted_prompt_types
+            ]
+            non_empty = [values.size > 0 for values in values_per_group]
+            if not any(non_empty):
+                continue
+
+            # Matplotlib cannot draw empty distributions. Draw the available
+            # prompt-type groups in one call so the visual matches old_plot as
+            # closely as possible.
+            values = [v for v, keep in zip(values_per_group, non_empty) if keep]
+            positions = bars_index[non_empty] + i * bar_width
+            violins = ax.violinplot(
+                values,
+                positions=positions,
+                widths=bar_width,
+                showmeans=True,
+                showmedians=False,
+            )
+            if slot_key == "NoExplanation":
+                for body in violins["bodies"]:
+                    body.set_facecolor("black")
+                    body.set_edgecolor("black")
+                for line_key in ("cmeans", "cmaxes", "cmins", "cbars"):
+                    if line_key in violins:
+                        violins[line_key].set_edgecolor("black")
+
+            handles.append(
+                patches.Patch(color=violins["bodies"][0].get_facecolor().flatten())
+            )
+            labels.append(slot_key)
+
+        for i, prompt_type in enumerate(plotted_prompt_types):
+            if prompt_type not in baseline_means:
+                continue
+            baseline = baseline_means[prompt_type].get(None)
+            if baseline is None:
+                continue
+            xmin = bars_index[i] - bar_width
+            xmax = bars_index[i] + bar_width * num_slots
+            ax.plot([xmin, xmax], [baseline, baseline], color="black", linewidth=1)
+
+        ax.set_xlabel("Prompt types")
+        ax.set_ylabel("Simulatability score")
+        ax.set_xticks(bars_index + bar_width * (num_slots - 1) / 2)
+        ax.set_xticklabels(plotted_prompt_types)
+        if title is not None:
+            ax.set_title(title)
+        ax.legend(handles, labels, bbox_to_anchor=(1.01, 1), loc="upper left")
+        fig.tight_layout()
+
+        if save_dir is not None and file_name is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            fig.savefig(os.path.join(save_dir, file_name))
+
+        return ax
+
     # Violin slots: methods (in order) + NoExplanation last (if any group has one).
     has_baseline = any("NoExplanation" in d for d in distributions.values())
     slot_keys = list(methods) + (["NoExplanation"] if has_baseline else [])
@@ -196,7 +273,7 @@ def plot_accuracies_violins(
     # first split is drawn with a lighter fill + hatching, the second with a
     # solid darker fill. With other split counts we vary alpha smoothly.
     if n_splits == 1:
-        split_styles = {None: {"alpha": 0.75, "hatch": None}}
+        split_styles = {None: {"alpha": 0.65, "hatch": None}}
     elif n_splits == 2:
         split_styles = {
             split_values[0]: {"alpha": 0.45, "hatch": "//"},
