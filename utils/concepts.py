@@ -411,6 +411,7 @@ def load_concept_model(concept_explainer, model_path: Path, device):
         concept_explainer.concept_model.load_state_dict(
             torch.load(str(model_path), map_location=device, weights_only=True)
         )
+        concept_explainer.to(device)
         if hasattr(concept_explainer.concept_model, "training"):
             concept_explainer.concept_model.training = False
         return concept_explainer
@@ -451,6 +452,7 @@ def load_or_fit_concept_model(
 
     if method_name == "NeuronsAsConcepts":
         concept_explainer = method(splitter)
+        concept_explainer.to(device)
         concept_model_path = concept_dir / "concept_model.pt"
         if concept_model_path.exists():
             return load_concept_model(concept_explainer, concept_model_path, device)
