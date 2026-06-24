@@ -161,6 +161,7 @@ def generate_answers(
     thinking: bool,
     max_new_tokens: int,
     batch_size: int,
+    progress_desc: str = "Generation batches",
 ) -> list[str]:
     """Run batched forward passes for a prompt group."""
     full_prompts = [
@@ -169,7 +170,13 @@ def generate_answers(
 
     generated_texts: list[str] = []
     model_device = next(model.parameters()).device
-    for batch_start in range(0, len(full_prompts), batch_size):
+    batch_starts = range(0, len(full_prompts), batch_size)
+    for batch_start in tqdm(
+        batch_starts,
+        total=(len(full_prompts) + batch_size - 1) // batch_size,
+        desc=progress_desc,
+        leave=False,
+    ):
         batch_prompts = full_prompts[batch_start : batch_start + batch_size]
         model_inputs = tokenizer(
             batch_prompts,
@@ -449,9 +456,14 @@ def main() -> None:
 
     # Determine which keys need scoring. Corrupted prompt groups are explicit
     # run markers and must never be forwarded to the judge.
-    prompt_groups = []
+    prompt_groups_by_path = {}
     for prompt_path in prompt_paths:
-        prompt_groups.extend(iter_jsonl(prompt_path))
+        prompt_groups_by_path[prompt_path] = list(iter_jsonl(prompt_path))
+    prompt_groups = [
+        prompt_group
+        for path_prompt_groups in prompt_groups_by_path.values()
+        for prompt_group in path_prompt_groups
+    ]
     requested_keys = {pg["key"] for pg in prompt_groups if not pg.get("corrupted")}
     missing_keys = requested_keys - treated_keys
 
@@ -493,59 +505,68 @@ def main() -> None:
     with open(score_path, "a", newline="") as handle:
         writer = csv.writer(handle)
 
-        prompt_groups_to_score = []
         queued_keys: set[str] = set()
-        for prompt_group in prompt_groups:
-            key = prompt_group["key"]
-            if (
-                key in missing_keys
-                and key not in queued_keys
-                and not prompt_group.get("corrupted")
-            ):
-                prompt_groups_to_score.append(prompt_group)
-                queued_keys.add(key)
+        with tqdm(total=len(missing_keys), desc="Total scoring") as total_progress:
+            for file_index, prompt_path in enumerate(prompt_paths, start=1):
+                prompt_groups_to_score = []
+                for prompt_group in prompt_groups_by_path[prompt_path]:
+                    key = prompt_group["key"]
+                    if (
+                        key in missing_keys
+                        and key not in queued_keys
+                        and not prompt_group.get("corrupted")
+                    ):
+                        prompt_groups_to_score.append(prompt_group)
+                        queued_keys.add(key)
 
-        for prompt_group in tqdm(
-            prompt_groups_to_score, total=len(prompt_groups_to_score)
-        ):
-            user_prompts = prompt_group["user_prompts"]
-            expected_answers = prompt_group["expected_answers"]
-
-            # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
-            is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
-
-            # Old ConSim must emit one "Sample_N: class" line per evaluation
-            # sample in a single response, so the default --max-new-tokens
-            # (calibrated for new ConSim's one-token answer) caps scores at
-            # ~0.5. Auto-scale the budget for old-ConSim prompts.
-            max_new_tokens = (
-                old_consim_max_new_tokens(expected_answers, args.max_new_tokens)
-                if is_old_consim
-                else args.max_new_tokens
-            )
-
-            answers = generate_answers(
-                model=model,
-                tokenizer=tokenizer,
-                system_prompt=prompt_group["system_prompt"],
-                user_prompts=user_prompts,
-                thinking=args.thinking,
-                max_new_tokens=max_new_tokens,
-                batch_size=args.batch_size,
-            )
-
-            if is_old_consim:
-                accuracy = score_prompt_group_old(
-                    answers[0], expected_answers, user_prompts[0]
+                tqdm.write(
+                    f"[{file_index}/{len(prompt_paths)}] {prompt_path}: "
+                    f"{len(prompt_groups_to_score)} prompt groups to score"
                 )
-            else:
-                accuracy = score_prompt_group_new(answers, expected_answers)
+                if not prompt_groups_to_score:
+                    continue
 
-            # Append score row.
-            writer.writerow(
-                ast.literal_eval(prompt_group["key"]) + (datetime.now(), accuracy)
-            )
-            handle.flush()
+                for prompt_group in prompt_groups_to_score:
+                    user_prompts = prompt_group["user_prompts"]
+                    expected_answers = prompt_group["expected_answers"]
+
+                    # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
+                    is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
+
+                    # Old ConSim must emit one "Sample_N: class" line per evaluation
+                    # sample in a single response, so the default --max-new-tokens
+                    # (calibrated for new ConSim's one-token answer) caps scores at
+                    # ~0.5. Auto-scale the budget for old-ConSim prompts.
+                    max_new_tokens = (
+                        old_consim_max_new_tokens(expected_answers, args.max_new_tokens)
+                        if is_old_consim
+                        else args.max_new_tokens
+                    )
+
+                    answers = generate_answers(
+                        model=model,
+                        tokenizer=tokenizer,
+                        system_prompt=prompt_group["system_prompt"],
+                        user_prompts=user_prompts,
+                        thinking=args.thinking,
+                        max_new_tokens=max_new_tokens,
+                        batch_size=args.batch_size,
+                        progress_desc="Generation batches",
+                    )
+
+                    if is_old_consim:
+                        accuracy = score_prompt_group_old(
+                            answers[0], expected_answers, user_prompts[0]
+                        )
+                    else:
+                        accuracy = score_prompt_group_new(answers, expected_answers)
+
+                    # Append score row.
+                    writer.writerow(
+                        ast.literal_eval(prompt_group["key"]) + (datetime.now(), accuracy)
+                    )
+                    handle.flush()
+                    total_progress.update(1)
 
     print(
         f"\nScored {len(missing_keys)} keys with {args.judge_model} "
