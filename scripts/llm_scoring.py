@@ -168,7 +168,26 @@ def generate_answers(
     full_prompts = [
         render_prompt(tokenizer, system_prompt, up, thinking) for up in user_prompts
     ]
+    return generate_completions(
+        model=model,
+        tokenizer=tokenizer,
+        full_prompts=full_prompts,
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,
+        progress_desc=progress_desc,
+    )
 
+
+def generate_completions(
+    model,
+    tokenizer,
+    full_prompts: list[str],
+    *,
+    max_new_tokens: int,
+    batch_size: int,
+    progress_desc: str = "Generation batches",
+) -> list[str]:
+    """Run batched forward passes for already-rendered prompts."""
     generated_texts: list[str] = []
     model_device = next(model.parameters()).device
     batch_starts = range(0, len(full_prompts), batch_size)
@@ -198,6 +217,22 @@ def generate_answers(
         )
 
     return generated_texts
+
+
+def is_old_consim_prompt_group(prompt_group: dict) -> bool:
+    """Detect old ConSim mode: one prompt asks for multiple answers."""
+    return (
+        len(prompt_group["user_prompts"]) == 1
+        and len(prompt_group["expected_answers"]) > 1
+    )
+
+
+def allowed_answers_for_prompt_group(prompt_group: dict) -> list[str]:
+    """Allowed labels from the system prompt, falling back to expected answers."""
+    allowed_answers = extract_allowed_labels(prompt_group["system_prompt"])
+    if allowed_answers:
+        return allowed_answers
+    return prompt_group["expected_answers"]
 
 
 def normalize_label_text(text: str | None) -> str | None:
@@ -550,24 +585,67 @@ def main() -> None:
                 if not prompt_groups_to_score:
                     continue
 
+                def write_new_consim_batch(new_prompt_groups: list[dict]) -> None:
+                    if not new_prompt_groups:
+                        return
+
+                    full_prompts = []
+                    group_slices = []
+                    for prompt_group in new_prompt_groups:
+                        start = len(full_prompts)
+                        full_prompts.extend(
+                            render_prompt(
+                                tokenizer,
+                                prompt_group["system_prompt"],
+                                user_prompt,
+                                args.thinking,
+                            )
+                            for user_prompt in prompt_group["user_prompts"]
+                        )
+                        group_slices.append((prompt_group, start, len(full_prompts)))
+
+                    answers = generate_completions(
+                        model=model,
+                        tokenizer=tokenizer,
+                        full_prompts=full_prompts,
+                        max_new_tokens=args.max_new_tokens,
+                        batch_size=args.batch_size,
+                        progress_desc="Generation batches",
+                    )
+
+                    for prompt_group, start, end in group_slices:
+                        accuracy = score_prompt_group_new(
+                            answers[start:end],
+                            prompt_group["expected_answers"],
+                            allowed_answers_for_prompt_group(prompt_group),
+                        )
+                        writer.writerow(
+                            ast.literal_eval(prompt_group["key"])
+                            + (datetime.now(), accuracy)
+                        )
+                        handle.flush()
+                        total_progress.update(1)
+
+                new_consim_batch = []
                 for prompt_group in prompt_groups_to_score:
+                    if not is_old_consim_prompt_group(prompt_group):
+                        new_consim_batch.append(prompt_group)
+                        continue
+
+                    write_new_consim_batch(new_consim_batch)
+                    new_consim_batch.clear()
+
                     user_prompts = prompt_group["user_prompts"]
                     expected_answers = prompt_group["expected_answers"]
-                    allowed_answers = extract_allowed_labels(prompt_group["system_prompt"])
-                    if not allowed_answers:
-                        allowed_answers = expected_answers
-
-                    # Detect mode: old ConSim has 1 user prompt but multiple expected answers.
-                    is_old_consim = len(user_prompts) == 1 and len(expected_answers) > 1
+                    allowed_answers = allowed_answers_for_prompt_group(prompt_group)
 
                     # Old ConSim must emit one "Sample_N: class" line per evaluation
                     # sample in a single response, so the default --max-new-tokens
                     # (calibrated for new ConSim's one-token answer) caps scores at
                     # ~0.5. Auto-scale the budget for old-ConSim prompts.
-                    max_new_tokens = (
-                        old_consim_max_new_tokens(expected_answers, args.max_new_tokens)
-                        if is_old_consim
-                        else args.max_new_tokens
+                    max_new_tokens = old_consim_max_new_tokens(
+                        expected_answers,
+                        args.max_new_tokens,
                     )
 
                     answers = generate_answers(
@@ -581,14 +659,9 @@ def main() -> None:
                         progress_desc="Generation batches",
                     )
 
-                    if is_old_consim:
-                        accuracy = score_prompt_group_old(
-                            answers[0], expected_answers, user_prompts[0], allowed_answers
-                        )
-                    else:
-                        accuracy = score_prompt_group_new(
-                            answers, expected_answers, allowed_answers
-                        )
+                    accuracy = score_prompt_group_old(
+                        answers[0], expected_answers, user_prompts[0], allowed_answers
+                    )
 
                     # Append score row.
                     writer.writerow(
@@ -596,6 +669,8 @@ def main() -> None:
                     )
                     handle.flush()
                     total_progress.update(1)
+
+                write_new_consim_batch(new_consim_batch)
 
     print(
         f"\nScored {len(missing_keys)} keys with {args.judge_model} "
