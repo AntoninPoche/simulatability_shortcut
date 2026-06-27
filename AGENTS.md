@@ -172,6 +172,13 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 ## Architecture Notes
 
 - **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/BatchTopKSAE/VanillaSAE/NeuronsAsConcepts with `topk`/`llm` interpretation keys), rationales (LLM generated), and attributions (gradient-based).
+- **Prompt harmonization across families**: `utils/consim.py`, `utils/ratsim.py`, and `utils/attrsim.py` share the same prompt skeleton:
+  - Task description uses the canonical ConSim wording (`"You are a classifier. Your task is to assign a label to the evaluation sample. ..."`) with one explanation-specific sentence appended when the family-specific LP block is enabled (concept importances, attributions, rationales).
+  - `The classes are: [...]` line is identical, parsed by `extract_allowed_labels` in `llm_scoring.py`.
+  - LP examples follow `Sample_{i}:\n\tText: ...\n\tLabel: <pred>` with an optional extra family-specific line (concepts contributions / Attributions / Explanation).
+  - Evaluation user prompts follow `Evaluation sample:\n\tText: ...\n\tLabel: ` in all three families.
+  - **Baselines invariant**: B1 (without LP) and B2 (with LP) produce byte-identical system prompts, user prompts, and expected answers across concepts/rationales/attributions for the same dataset/seed/classes_subset. If you change one family's task description or LP/user-prompt format, change the other two together to preserve this invariant.
+- **Rationale anonymization**: `RationalesSimulatability` anonymizes class names appearing inside LP example texts and rationale text using a word-boundary regex (`(?<!\w)<class>(?!\w)`, case-insensitive). Substrings inside other words (e.g. `position` when class is `pos`) are intentionally left untouched. The naive `str.replace` previously used here corrupted unrelated text and is gone; do not reintroduce it.
 - **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
 - **Concept creation is integrated into prompt generation**: `make_prompts.py` builds concept artifacts (model, interpretations, global importances, ALL local importances) automatically if they are missing from cache. Heavy ML work (interpreto imports, task model loading) only happens on first run.
 - **Activation/prediction caches**: `get_activations` returns `(activations, predictions)`, and `utils.data.load_or_compute_activations` caches that tuple for train/validation/test splits (`activations.pt`, `validation_activations.pt`, `test_activations.pt`). There is no separate prediction cache.

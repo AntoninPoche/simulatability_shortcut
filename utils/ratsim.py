@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import NamedTuple
 
@@ -12,9 +13,6 @@ class RationalePromptSetting(NamedTuple):
     # learning phase configuration
     lp_samples: bool = False
     lp_rationale_justify: bool = False
-
-    # evaluation phase configuration
-    include_input_text: bool = True
 
     # anonymization and masking
     anonymize_classes: bool = False
@@ -104,24 +102,25 @@ class RationalesSimulatability(AutomatedSimulatability):
         system_prompt_parts = []
 
         # ==================================================================================
-        # Task description
-        task_description = (
-            "You are a classifier. For each sample, you have to predict the class. "
-        )
-
+        # Task description (harmonized with ConSim wording: B1/B2 produce byte-identical
+        # text across concepts/rationales/attributions families).
+        task_description_prompt = "You are a classifier. Your task is to assign a label to the evaluation sample. "
+        if setting.lp_samples:
+            if setting.lp_rationale_justify:
+                task_description_prompt += (
+                    "You will have examples of samples, labels, and explanations justifying "
+                    "the predictions as reference to learn the task. "
+                )
+            else:
+                task_description_prompt += (
+                    "You will have examples of samples and labels as reference to learn the task. "
+                )
         if setting.lp_rationale_justify:
-            task_description += (
-                "You will have examples of samples, labels, and explanations justifying "
-                "the predictions as reference for the task. "
+            task_description_prompt += (
+                "For each sample, the explanation justifies why the predicted label is correct. "
             )
-        elif setting.lp_samples:
-            task_description += "You will have examples of samples and labels as reference for the task. "
-
-        task_description += (
-            "User's prompt will contain an evaluation sample on which you should predict the class. "
-            "Only return the class name, no other text."
-        )
-        system_prompt_parts.append(task_description)
+        task_description_prompt += "User's prompt will contain an evaluation sample on which you should predict the class. Only return the class name, no other text."
+        system_prompt_parts.append(task_description_prompt)
 
         # ==================================================================================
         # Classes
@@ -129,10 +128,9 @@ class RationalesSimulatability(AutomatedSimulatability):
         if setting.anonymize_classes:
             display_classes = {i: f"Class_{i}" for i in classes.keys()}
 
-        classes_prompt = (
+        system_prompt_parts.append(
             f"The classes are: [{', '.join(list(display_classes.values()))}]"
         )
-        system_prompt_parts.append(classes_prompt)
 
         # Learning phase
         if setting.lp_samples:
@@ -160,33 +158,29 @@ class RationalesSimulatability(AutomatedSimulatability):
         # Concatenate system prompt parts
         system_prompt = "\n\n".join(system_prompt_parts)
 
-        # anonymize classes
+        # Anonymize lingering class-name occurrences inside LP example texts and rationale
+        # text. Word-boundary regex (case-insensitive) so that substrings inside other words
+        # are NOT touched (e.g. "position" must not become "Class_1ition" when class="pos").
         if setting.anonymize_classes:
-            for class_id in classes.keys():
-                system_prompt = system_prompt.replace(
-                    classes[class_id], display_classes[class_id]
+            for class_id, class_name in classes.items():
+                pattern = re.compile(
+                    rf"(?<!\w){re.escape(class_name)}(?!\w)", re.IGNORECASE
                 )
+                system_prompt = pattern.sub(display_classes[class_id], system_prompt)
 
         # ==================================================================================
         # Inference (evaluation) phase - user prompts
-        user_prompts = []
-        for i in range(nb_learning_samples, len(interesting_samples)):
-            if setting.include_input_text:
-                prompt = "\n".join(
-                    [
-                        f"Sample_{i}:",
-                        f"\tText: {interesting_samples[i]}",
-                        "\tLabel: ",
-                    ]
-                )
-            else:
-                prompt = "\n".join(
-                    [
-                        f"Sample_{i}:",
-                        "\tLabel: ",
-                    ]
-                )
-            user_prompts.append(prompt)
+        # Harmonized with ConSim/AttrSim format: one "Evaluation sample:" block per sample.
+        user_prompts = [
+            "\n".join(
+                [
+                    "Evaluation sample:",
+                    f"\tText: {interesting_samples[i]}",
+                    "\tLabel: ",
+                ]
+            )
+            for i in range(nb_learning_samples, len(interesting_samples))
+        ]
 
         # Model predictions (expected answers)
         literal_model_predictions = [

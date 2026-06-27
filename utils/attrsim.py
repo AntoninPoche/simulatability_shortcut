@@ -317,9 +317,26 @@ class AttrSim(AutomatedSimulatability):
         if setting.anonymize_classes:
             classes = {i: f"Class_{i}" for i in classes.keys()}
 
+        # Task description harmonized with ConSim wording so that B1/B2 produce
+        # byte-identical system prompts across concepts/rationales/attributions.
+        task_description_prompt = "You are a classifier. Your task is to assign a label to the evaluation sample. "
+        if setting.lp_samples:
+            if setting.lp_attributions:
+                task_description_prompt += (
+                    "You will have examples of samples, labels, and attribution explanations as reference to learn the task. "
+                )
+            else:
+                task_description_prompt += (
+                    "You will have examples of samples and labels as reference to learn the task. "
+                )
+        if setting.lp_attributions:
+            task_description_prompt += (
+                "For each sample, the attributions are tokens with their importance scores, where positive scores support the prediction and negative scores oppose it. "
+            )
+        task_description_prompt += "User's prompt will contain an evaluation sample on which you should predict the class. Only return the class name, no other text."
+
         system_prompt_parts = [
-            "You are a classifier. Predict the class for each evaluation sample.",
-            "Only return the class name, no additional text.",
+            task_description_prompt,
             f"The classes are: [{', '.join(list(classes.values()))}]",
         ]
 
@@ -327,14 +344,7 @@ class AttrSim(AutomatedSimulatability):
             lp_blocks = []
             for i in range(nb_learning_samples):
                 pred_index = int(corresponding_predictions[i])
-                if setting.lp_attributions:
-                    pretext = (
-                        "Use the provided learning examples and attribution explanations to infer the model behavior."
-                    )
-                else:
-                    pretext = "Use the provided learning examples to infer the model behavior."
                 lp_block = [
-                    pretext,
                     f"Sample_{i}:",
                     f"\tText: {interesting_samples[i]}",
                     f"\tLabel: {classes[pred_index]}",

@@ -122,7 +122,7 @@ def load_or_generate_rationales(
     model_device = torch.device(device)
     model_kwargs = {}
     if model_device.type == "cuda":
-        torch.cuda.set_device(model_device)
+        # torch.cuda.set_device(model_device)
         model_kwargs["torch_dtype"] = torch.bfloat16
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
