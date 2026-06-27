@@ -14,7 +14,7 @@ MODELS_DATASETS = {
     "SamLowe/roberta-base-go_emotions": "google-research-datasets/go_emotions",
     "nateraw/bert-base-uncased-emotion": "dair-ai/emotion",
     "Hate-speech-CNERG/bert-base-uncased-hatexplain": "Hate-speech-CNERG/hatexplain",
-    "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": "LabHC/bias_in_bios",
+    "Fannyjrd/roberta-bios-biased": "LabHC/bias_in_bios",
     "raulbs7/ag-news-classifier": "fancyzhx/ag_news",
     "keerthi1515/roberta-sentiment-rotten-tomatoes": "cornell-movie-review-data/rotten_tomatoes",
     "philipobiorah/bert-imdb-model": "stanfordnlp/imdb",
@@ -25,7 +25,7 @@ ABBREVIATIONS = {
         "SamLowe/roberta-base-go_emotions": "RB",
         "nateraw/bert-base-uncased-emotion": "B",
         "Hate-speech-CNERG/bert-base-uncased-hatexplain": "B",
-        "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/": "RB",
+        "Fannyjrd/roberta-bios-biased": "RB",
         "raulbs7/ag-news-classifier": "DB",
         "keerthi1515/roberta-sentiment-rotten-tomatoes": "RB",
         "philipobiorah/bert-imdb-model": "B",
@@ -78,34 +78,34 @@ DATASET_CLASSES_NAMES = {
         "offensive",
     ],
     "LabHC/bias_in_bios": [
-        "surgeon",  # 0
-        "pastor",  # 1
-        "photographer",  # 2
-        "professor",  # 3
-        "chiropractor",  # 4
-        "software_engineer",  # 5
-        "teacher",  # 6
-        "poet",  # 7
+        "accountant",  # 0
+        "architect",  # 1
+        "attorney",  # 2
+        "chiropractor",  # 3
+        "comedian",  # 4
+        "composer",  # 5
+        "dentist",  # 6
+        "dietitian",  # 7
         "dj",  # 8
-        "rapper",  # 9
-        "paralegal",  # 10
-        "physician",  # 11
-        "journalist",  # 12
-        "architect",  # 13
-        "attorney",  # 14
-        "yoga_teacher",  # 15
-        "nurse",  # 16
-        "painter",  # 17
-        "model",  # 18
-        "composer",  # 19
-        "personal_trainer",  # 20
-        "filmmaker",  # 21
-        "comedian",  # 22
-        "accountant",  # 23
-        "interior_designer",  # 24
-        "dentist",  # 25
-        "psychologist",  # 26
-        "dietitian",  # 27
+        "filmmaker",  # 9
+        "interior_designer",  # 10
+        "journalist",  # 11
+        "model",  # 12
+        "nurse",  # 13
+        "painter",  # 14
+        "paralegal",  # 15
+        "pastor",  # 16
+        "personal_trainer",  # 17
+        "photographer",  # 18
+        "physician",  # 19
+        "poet",  # 20
+        "professor",  # 21
+        "psychologist",  # 22
+        "rapper",  # 23
+        "software_engineer",  # 24
+        "surgeon",  # 25
+        "teacher",  # 26
+        "yoga_teacher",  # 27
     ],
     "fancyzhx/ag_news": [
         "World",  # 0
@@ -150,10 +150,10 @@ DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
         [0, 1, 2],  # all classes
     ],
     "LabHC/bias_in_bios": [
-        [0, 11, 25],  # surgeon, physician, dentist
-        [3, 6, 26],  # professor, teacher, psychologist
-        [3, 5, 13],  # professor, software_developer, architect
-        [2, 12, 21],  # photographer, journalist, filmmaker
+        [6, 19, 25],  # dentist, physician, surgeon
+        [21, 22, 26],  # professor, psychologist, teacher
+        [1, 21, 24],  # architect, professor, software_engineer
+        [9, 11, 18],  # filmmaker, journalist, photographer
     ],
     "fancyzhx/ag_news": [
         [0, 1, 2, 3],  # all classes: World, Sports, Business, Sci/Tech
@@ -272,15 +272,10 @@ def load_dataset_splits(dataset: str):
             :5000
         ]
         test_inputs = list(test_split["hard_text"])
-        # The dataset's "profession" column uses alphabetical class ordering,
-        # but the model predicts in DATASET_CLASSES_NAMES order. Remap labels
-        # so that label integers match model prediction indices.
-        classes_names = DATASET_CLASSES_NAMES[dataset]
-        labels_mapping = sorted(
-            range(len(classes_names)), key=lambda x: classes_names[x]
-        )
-        raw_labels = list(test_split[DATASET_LABEL_COLUMNS.get(dataset, "label")])
-        test_labels = [labels_mapping[l] for l in raw_labels]
+        # The Fannyjrd/roberta-bios-biased model was trained directly on the
+        # dataset's "profession" column, so its logits already align with the
+        # dataset labels (alphabetical class order). No remapping needed.
+        test_labels = list(test_split[DATASET_LABEL_COLUMNS.get(dataset, "label")])
     elif dataset == "Hate-speech-CNERG/hatexplain":
         train_inputs = [" ".join(x["post_tokens"]) for x in dataset_dict["train"]]  # type: ignore
         validation_inputs = [

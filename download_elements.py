@@ -14,6 +14,7 @@ MODELS_DATASETS = {
     "SamLowe/roberta-base-go_emotions": "google-research-datasets/go_emotions",
     "nateraw/bert-base-uncased-emotion": "dair-ai/emotion",
     # "Hate-speech-CNERG/bert-base-uncased-hatexplain": "Hate-speech-CNERG/hatexplain",
+    "Fannyjrd/roberta-bios-biased": "LabHC/bias_in_bios",
     "raulbs7/ag-news-classifier": "fancyzhx/ag_news",
     "keerthi1515/roberta-sentiment-rotten-tomatoes": "cornell-movie-review-data/rotten_tomatoes",
     "philipobiorah/bert-imdb-model": "stanfordnlp/imdb",

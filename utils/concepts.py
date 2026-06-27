@@ -350,8 +350,7 @@ def get_interpretation_config(
 
     if (
         dataset_name == "LabHC/bias_in_bios"
-        and model_name
-        == "/datasets/shared_datasets/BIOS/models/RoBERTa_occBIOS_10epochs_g1/"
+        and model_name == "Fannyjrd/roberta-bios-biased"
     ):
         config["llm"].update(
             {
