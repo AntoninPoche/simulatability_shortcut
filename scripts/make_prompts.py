@@ -135,8 +135,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--nb-samples",
         type=int,
-        default=20,
-        help="Number of samples per seed (default: 20).",
+        default=40,
+        help="Number of samples per seed (default: 40).",
     )
     parser.add_argument(
         "--device",
