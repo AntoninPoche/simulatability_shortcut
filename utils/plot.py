@@ -185,7 +185,12 @@ def plot_accuracies_violins(
         slot_keys = list(methods) + (["NoExplanation"] if has_baseline else [])
         num_slots = len(slot_keys)
         bar_width = 0.12
-        bars_index = np.arange(len(plotted_prompt_types))
+        # The old plot used unit-spaced prompt-type clusters. With the new
+        # grids we can have more method slots, so make the group spacing just
+        # wide enough to keep neighbouring prompt-type clusters from touching
+        # while preserving the old within-cluster violin geometry.
+        group_spacing = max(1.0, bar_width * (num_slots + 2))
+        bars_index = np.arange(len(plotted_prompt_types)) * group_spacing
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(18, 6))
