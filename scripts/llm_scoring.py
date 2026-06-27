@@ -21,6 +21,8 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import json
+import math
 import re
 import sys
 from datetime import datetime
@@ -90,7 +92,14 @@ def get_score_path(judge_model: str, thinking: bool) -> Path:
     """Derive score CSV path from judge model name and thinking mode."""
     model_slug = judge_model.replace("/", "_")
     thinking_str = "_thinking" if thinking else ""
-    return Path(f"data/consim_{model_slug}{thinking_str}.csv")
+    return Path(f"data/consim_{model_slug}{thinking_str}_v2.csv")
+
+
+def get_generation_log_path(judge_model: str, thinking: bool) -> Path:
+    """Derive raw-generation JSONL path from judge model name and thinking mode."""
+    model_slug = judge_model.replace("/", "_")
+    thinking_str = "_thinking" if thinking else ""
+    return Path(f"data/generations/{model_slug}{thinking_str}.jsonl")
 
 
 def load_treated_keys(score_path: Path) -> set[str]:
@@ -100,7 +109,8 @@ def load_treated_keys(score_path: Path) -> set[str]:
         with open(score_path, "w") as handle:
             handle.write(
                 "dataset,model,classes_subset,seed,method,nb_concepts,"
-                "interpretation,prompt_type,specification,time,score\n"
+                "interpretation,prompt_type,specification,time,score,"
+                "num_correct,num_valid,num_expected\n"
             )
         return set()
 
@@ -443,18 +453,19 @@ def score_prompt_group_new(
     answers: list[str],
     expected_answers: list[str],
     allowed_answers: list[str] | None = None,
-) -> float:
-    """Score new ConSim mode: one answer per evaluation sample."""
-    score = 0
-    failed = 0
+) -> tuple[int, int, int]:
+    """Count correct and valid answers for one-answer-per-sample mode."""
+    num_correct = 0
+    num_valid = 0
     labels_to_match = allowed_answers if allowed_answers is not None else expected_answers
     for answer, expected in zip(answers, expected_answers, strict=True):
         predicted = extract_prediction(answer, labels_to_match)
-        if not prediction_matches(predicted, expected):
-            failed += 1
+        if predicted is None:
             continue
-        score += 1
-    return score / len(expected_answers)
+        num_valid += 1
+        if prediction_matches(predicted, expected):
+            num_correct += 1
+    return num_correct, num_valid, len(expected_answers)
 
 
 def score_prompt_group_old(
@@ -462,8 +473,8 @@ def score_prompt_group_old(
     expected_answers: list[str],
     user_prompt: str | None = None,
     allowed_answers: list[str] | None = None,
-) -> float:
-    """Score old ConSim mode: parse multi-line response."""
+) -> tuple[int, int, int]:
+    """Count correct and valid answers for old-ConSim multi-line mode."""
     sample_ids = extract_sample_ids(user_prompt) if user_prompt is not None else None
     predictions = parse_old_consim_response(
         answer,
@@ -471,11 +482,58 @@ def score_prompt_group_old(
         allowed_answers=allowed_answers,
         sample_ids=sample_ids,
     )
-    score = sum(
-        int(prediction_matches(pred, expected))
+    num_valid = sum(pred is not None for pred in predictions)
+    num_correct = sum(
+        int(pred is not None and prediction_matches(pred, expected))
         for pred, expected in zip(predictions, expected_answers, strict=True)
     )
-    return score / len(expected_answers)
+    return num_correct, num_valid, len(expected_answers)
+
+
+def compute_group_score(
+    num_correct: int,
+    num_valid: int,
+    num_expected: int,
+    coverage_ratio: float = 0.7,
+) -> float:
+    """Abstention-aware accuracy, or NaN when valid coverage is too low."""
+    if num_expected <= 0:
+        return float("nan")
+    min_valid = math.ceil(coverage_ratio * num_expected)
+    if num_valid < min_valid or num_valid == 0:
+        return float("nan")
+    return num_correct / num_valid
+
+
+def write_generation_log(
+    handle,
+    prompt_group: dict,
+    allowed_answers: list[str],
+    raw_answers: list[str],
+    specification: str,
+    max_new_tokens: int,
+    thinking: bool,
+) -> None:
+    """Append raw generation output for offline parser/debug reruns."""
+    handle.write(
+        json.dumps(
+            {
+                "key": prompt_group["key"],
+                "system_prompt": prompt_group["system_prompt"],
+                "user_prompts": prompt_group["user_prompts"],
+                "expected_answers": prompt_group["expected_answers"],
+                "allowed_answers": allowed_answers,
+                "raw_answers": raw_answers,
+                "specification": specification,
+                "max_new_tokens": max_new_tokens,
+                "thinking": thinking,
+                "generated_at": datetime.now().isoformat(),
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    handle.flush()
 
 
 def old_consim_max_new_tokens(
@@ -492,13 +550,13 @@ def old_consim_max_new_tokens(
 
     Rough per-line cost: ``"Sample_NN: "`` is ~5 tokens, the label is bounded
     by ``ceil(len(label) / 3)`` tokens for typical BPE tokenizers (one token
-    per ~3-4 chars), and we add 1 for the newline. We then add a 32-token
+    per ~3-4 chars), and we add 1 for the newline. We then add a 128-token
     slack for any preamble the model might emit and respect the user override
     if it is larger.
     """
     longest_label_chars = max((len(answer) for answer in expected_answers), default=0)
     per_line_tokens = 5 + (longest_label_chars + 2) // 3 + 1  # prefix + label + newline
-    required = per_line_tokens * len(expected_answers) + 32
+    required = per_line_tokens * len(expected_answers) + 128
     return max(user_max_new_tokens, required)
 
 
@@ -538,6 +596,9 @@ def main() -> None:
         print(f"  - {prompt_path}")
     print(f"Thinking:     {args.thinking}")
     print(f"Score file:   {score_path}")
+    generation_log_path = get_generation_log_path(args.judge_model, args.thinking)
+    generation_log_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Generations:  {generation_log_path}")
     print(f"To score:     {len(missing_keys)} / {len(requested_keys)} keys")
     print()
 
@@ -561,7 +622,10 @@ def main() -> None:
         model.generation_config.pad_token_id = tokenizer.pad_token_id
 
     # Score missing keys.
-    with open(score_path, "a", newline="") as handle:
+    with open(score_path, "a", newline="") as handle, open(
+        generation_log_path,
+        "a",
+    ) as generation_log_handle:
         writer = csv.writer(handle)
 
         queued_keys: set[str] = set()
@@ -614,14 +678,36 @@ def main() -> None:
                     )
 
                     for prompt_group, start, end in group_slices:
-                        accuracy = score_prompt_group_new(
-                            answers[start:end],
+                        group_answers = answers[start:end]
+                        allowed_answers = allowed_answers_for_prompt_group(prompt_group)
+                        write_generation_log(
+                            generation_log_handle,
+                            prompt_group,
+                            allowed_answers,
+                            group_answers,
+                            "new_consim",
+                            args.max_new_tokens,
+                            args.thinking,
+                        )
+                        num_correct, num_valid, num_expected = score_prompt_group_new(
+                            group_answers,
                             prompt_group["expected_answers"],
-                            allowed_answers_for_prompt_group(prompt_group),
+                            allowed_answers,
+                        )
+                        accuracy = compute_group_score(
+                            num_correct,
+                            num_valid,
+                            num_expected,
                         )
                         writer.writerow(
                             ast.literal_eval(prompt_group["key"])
-                            + (datetime.now(), accuracy)
+                            + (
+                                datetime.now(),
+                                accuracy,
+                                num_correct,
+                                num_valid,
+                                num_expected,
+                            )
                         )
                         handle.flush()
                         total_progress.update(1)
@@ -659,13 +745,35 @@ def main() -> None:
                         progress_desc="Generation batches",
                     )
 
-                    accuracy = score_prompt_group_old(
+                    write_generation_log(
+                        generation_log_handle,
+                        prompt_group,
+                        allowed_answers,
+                        answers,
+                        "old_consim",
+                        max_new_tokens,
+                        args.thinking,
+                    )
+
+                    num_correct, num_valid, num_expected = score_prompt_group_old(
                         answers[0], expected_answers, user_prompts[0], allowed_answers
+                    )
+                    accuracy = compute_group_score(
+                        num_correct,
+                        num_valid,
+                        num_expected,
                     )
 
                     # Append score row.
                     writer.writerow(
-                        ast.literal_eval(prompt_group["key"]) + (datetime.now(), accuracy)
+                        ast.literal_eval(prompt_group["key"])
+                        + (
+                            datetime.now(),
+                            accuracy,
+                            num_correct,
+                            num_valid,
+                            num_expected,
+                        )
                     )
                     handle.flush()
                     total_progress.update(1)
