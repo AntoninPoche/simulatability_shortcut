@@ -30,6 +30,7 @@ for model_id, dataset_id in MODELS_DATASETS.items():
 LLM_MODELS = {
     "llama3.2-3b": "meta-llama/Llama-3.2-3B-Instruct",
     "llama3.1-8b": "meta-llama/Llama-3.1-8B-Instruct",
+    "qwen3.5-2b": "Qwen/Qwen3.5-2B",
     "qwen3.5-9b": "Qwen/Qwen3.5-9B",
     # "qwen3.6-27b": "Qwen/Qwen3.6-27B",
     "phi4": "microsoft/phi-4",
