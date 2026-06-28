@@ -13,7 +13,7 @@ for package in NLTK_PACKAGES:
 MODELS_DATASETS = {
     "SamLowe/roberta-base-go_emotions": "google-research-datasets/go_emotions",
     "nateraw/bert-base-uncased-emotion": "dair-ai/emotion",
-    # "Hate-speech-CNERG/bert-base-uncased-hatexplain": "Hate-speech-CNERG/hatexplain",
+    "Hate-speech-CNERG/bert-base-uncased-hatexplain": "Hate-speech-CNERG/hatexplain",
     "Fannyjrd/roberta-bios-biased": "LabHC/bias_in_bios",
     "raulbs7/ag-news-classifier": "fancyzhx/ag_news",
     "keerthi1515/roberta-sentiment-rotten-tomatoes": "cornell-movie-review-data/rotten_tomatoes",
@@ -32,9 +32,9 @@ LLM_MODELS = {
     "llama3.1-8b": "meta-llama/Llama-3.1-8B-Instruct",
     "qwen3.5-2b": "Qwen/Qwen3.5-2B",
     "qwen3.5-9b": "Qwen/Qwen3.5-9B",
-    # "qwen3.6-27b": "Qwen/Qwen3.6-27B",
+    "qwen3.6-27b": "Qwen/Qwen3.6-27B",
     "phi4": "microsoft/phi-4",
-    # "ministral-14b": "mistralai/Ministral-3-14B-Instruct-2512",
+    "ministral-14b": "mistralai/Ministral-3-14B-Instruct-2512",
     "gemma4-31b": "google/gemma-4-31B-it",
     "gpt-oss-20b": "openai/gpt-oss-20b",
 }
