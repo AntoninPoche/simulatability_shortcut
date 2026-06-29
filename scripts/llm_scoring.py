@@ -185,7 +185,6 @@ def generate_answers(
     thinking: bool,
     max_new_tokens: int,
     batch_size: int,
-    progress_desc: str = "Generation batches",
 ) -> list[str]:
     """Run batched forward passes for a prompt group."""
     full_prompts = [
@@ -197,7 +196,6 @@ def generate_answers(
         full_prompts=full_prompts,
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
-        progress_desc=progress_desc,
     )
 
 
@@ -208,18 +206,12 @@ def generate_completions(
     *,
     max_new_tokens: int,
     batch_size: int,
-    progress_desc: str = "Generation batches",
 ) -> list[str]:
     """Run batched forward passes for already-rendered prompts."""
     generated_texts: list[str] = []
     model_device = next(model.parameters()).device
     batch_starts = range(0, len(full_prompts), batch_size)
-    for batch_start in tqdm(
-        batch_starts,
-        total=(len(full_prompts) + batch_size - 1) // batch_size,
-        desc=progress_desc,
-        leave=False,
-    ):
+    for batch_start in batch_starts:
         batch_prompts = full_prompts[batch_start : batch_start + batch_size]
         model_inputs = tokenizer(
             batch_prompts,
@@ -684,7 +676,6 @@ def main() -> None:
                         full_prompts=full_prompts,
                         max_new_tokens=args.max_new_tokens,
                         batch_size=args.batch_size,
-                        progress_desc="Generation batches",
                     )
 
                     for prompt_group, start, end in group_slices:
@@ -774,7 +765,6 @@ def main() -> None:
                         thinking=args.thinking,
                         max_new_tokens=max_new_tokens,
                         batch_size=args.batch_size,
-                        progress_desc="Generation batches",
                     )
 
                     write_generation_log(
