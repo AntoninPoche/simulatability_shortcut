@@ -1,3 +1,20 @@
+python scripts/make_prompts.py concepts E seminmf --interpretation topk
+python scripts/make_prompts.py concepts E seminmf --interpretation llm
+python scripts/make_prompts.py concepts E ica --interpretation topk
+python scripts/make_prompts.py concepts E ica --interpretation llm
+python scripts/make_prompts.py concepts E kmeans --interpretation topk
+python scripts/make_prompts.py concepts E kmeans --interpretation llm
+python scripts/make_prompts.py concepts E pca --interpretation topk
+python scripts/make_prompts.py concepts E pca --interpretation llm
+python scripts/make_prompts.py concepts E scd --interpretation topk
+python scripts/make_prompts.py concepts E scd --interpretation llm
+python scripts/make_prompts.py concepts E batchtopk_sae --interpretation topk
+python scripts/make_prompts.py concepts E batchtopk_sae --interpretation llm
+python scripts/make_prompts.py concepts E vanilla_sae --interpretation topk
+python scripts/make_prompts.py concepts E vanilla_sae --interpretation llm
+python scripts/make_prompts.py concepts E neurons --interpretation topk
+python scripts/make_prompts.py concepts E neurons --interpretation llm
+python scripts/make_prompts.py concepts E classes
 python scripts/make_prompts.py concepts GE seminmf --interpretation topk
 python scripts/make_prompts.py concepts GE seminmf --interpretation llm
 python scripts/make_prompts.py concepts GE ica --interpretation topk

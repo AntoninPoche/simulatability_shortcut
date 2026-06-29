@@ -1,3 +1,13 @@
+python scripts/make_prompts.py attributions E saliency
+python scripts/make_prompts.py attributions E integrated_gradients
+python scripts/make_prompts.py attributions E smooth_grad
+python scripts/make_prompts.py attributions E square_grad
+python scripts/make_prompts.py attributions E var_grad
+python scripts/make_prompts.py attributions E gradient_shap
+python scripts/make_prompts.py attributions E lime
+python scripts/make_prompts.py attributions E kernel_shap
+python scripts/make_prompts.py attributions E occlusion
+python scripts/make_prompts.py attributions E sobol
 python scripts/make_prompts.py attributions GE saliency
 python scripts/make_prompts.py attributions GE integrated_gradients
 python scripts/make_prompts.py attributions GE smooth_grad
