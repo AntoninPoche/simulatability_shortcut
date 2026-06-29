@@ -132,3 +132,5 @@ squeue -u $USER                                           # see queued/running j
 tail -f data/logs/<job_name>_<jobid>.out                  # follow stdout log
 scancel <jobid>                                           # cancel a job or array
 ```
+
+./make_manifests.sh manifests/all_prompts.tsv scripts/llm_scoring.py qwen3.5-9b data/prompts/AG_attributions.jsonl,data/prompts/GE_rationales.jsonl,data/prompts/BIOS_rationales.jsonl,data/prompts/RT_attributions.jsonl,data/prompts/AG_concepts.jsonl,data/prompts/IMDB_attributions.jsonl,data/prompts/AG_rationales.jsonl,data/prompts/E_concepts.jsonl,data/prompts/RT_concepts.jsonl,data/prompts/GE_attributions.jsonl,data/prompts/IMDB_concepts.jsonl,data/prompts/RT_rationales.jsonl,data/prompts/BIOS_attributions.jsonl,data/prompts/IMDB_rationales.jsonl

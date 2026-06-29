@@ -20,6 +20,7 @@ Forked from [contrastive_concepts](https://github.com/AntoninPoche/contrastive_c
 ```
 scripts/
   make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse); builds concept artifacts if missing
+  make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
@@ -31,6 +32,7 @@ utils/                        # Shared library package
   registries.py               # Lightweight method/prompt registries for fast early-exit checks
   concepts.py                 # Concept model loading/fitting, interpretations, importances, build pipeline
   consim.py                   # New ConSim prompt builder (one prompt per eval sample)
+  consim_v2.py                # Simulator-framed ConSim prompt builder; inherits current ConSim and changes only prompting
   old_consim.py               # Old ConSim prompt builder (all eval samples at once)
   simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
   rationales.py               # Rationale generation from local LLMs (Qwen)
@@ -38,6 +40,10 @@ utils/                        # Shared library package
   plot.py                     # Plot helpers for score visualizations (new ConSim naming)
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
+manifests/                    # Cluster command manifests; *_missing.tsv reruns only currently missing prompt groups
+notebooks/
+  4_compare_consim.ipynb      # Old/new ConSim score comparisons and diagnostics
+  5_compare_families.ipynb    # Concept/rationale/attribution prompt-type score comparisons
 generation_concept_tutorial.ipynb  # Interpreto concept tutorial, including BatchTopK SAE loss setup
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
 data/                         # Gitignored artifacts: activation/prediction caches, prompts, scores
@@ -45,10 +51,10 @@ data/                         # Gitignored artifacts: activation/prediction cach
 
 ## Import Architecture
 
-- **Local `utils/` package**: `simulatability.py`, `consim.py`, `old_consim.py`, `ratsim.py` — these are the canonical implementations, not imported from interpreto.
+- **Local `utils/` package**: `simulatability.py`, `consim.py`, `consim_v2.py`, `old_consim.py`, `ratsim.py` — these are the canonical implementations, not imported from interpreto.
 - **Lightweight key registries**: `utils/registries.py` stores method names and prompt abbreviations used for argument validation and early-exit key computation without importing torch/interpreto/transformers.
 - **From `interpreto`**: concept extraction algorithms (`SemiNMFConcepts`, `ICAConcepts`, etc.), `SplitterForClassification`, and concept interpretation implementations resolved from keys such as `topk`/`llm`. Used only by `utils/concepts.py` for the heavy ML components (loaded lazily when concept artifacts need building).
-- **Prompt scripts (`make_prompts.py`, `make_prompts_old_consim.py`) import from `utils/concepts.py`** — which handles both loading cached artifacts and building them (with interpreto) when missing.
+- **Prompt scripts (`make_prompts.py`, `make_prompts_consim_v2.py`, `make_prompts_old_consim.py`) import from `utils/concepts.py`** — which handles both loading cached artifacts and building them (with interpreto) when missing.
 - All scripts add the repo root to `sys.path` so `from utils.* import ...` works when running `python scripts/foo.py`.
 
 ## Commands
@@ -70,6 +76,13 @@ python scripts/make_prompts.py concepts RT classes --interpretation topk  # inte
 python scripts/make_prompts.py rationales BIOS
 python scripts/make_prompts.py rationales BIOS --llm-model qwen3.5-9b
 python scripts/make_prompts.py attributions GE saliency
+```
+
+**Generate prompts — simulator-framed ConSim** (concepts only; writes `specification=simulator_consim` to `{dataset}_concepts.jsonl`):
+
+```bash
+python scripts/make_prompts_consim_v2.py GE seminmf
+python scripts/make_prompts_consim_v2.py BIOS ica --interpretation topk
 ```
 
 **Generate prompts — old ConSim** (for new-vs-old comparison, uses same cached samples):
@@ -129,6 +142,7 @@ Prompt generation:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
 ```
 
@@ -136,6 +150,7 @@ Debug before larger runs:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT seminmf --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_consim_v2.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
@@ -156,6 +171,10 @@ Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, 
 ### `make_prompts_old_consim.py`
 
 Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place). For `classes`, `--interpretation` is ignored and prompt keys store `None`.
+
+### `make_prompts_consim_v2.py`
+
+Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for concept LLM interpretation, default llama3.2-3b), `--seeds`, `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`. Writes concept prompt groups to `data/prompts/{dataset}_concepts.jsonl` with `specification=simulator_consim`.
 
 ### `llm_scoring.py`
 
@@ -178,8 +197,9 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
   - LP examples follow `Sample_{i}:\n\tText: ...\n\tLabel: <pred>` with an optional extra family-specific line (concepts contributions / Attributions / Explanation).
   - Evaluation user prompts follow `Evaluation sample:\n\tText: ...\n\tLabel: ` in all three families.
   - **Baselines invariant**: B1 (without LP) and B2 (with LP) produce byte-identical system prompts, user prompts, and expected answers across concepts/rationales/attributions for the same dataset/seed/classes_subset. If you change one family's task description or LP/user-prompt format, change the other two together to preserve this invariant.
+- **Simulator-framed ConSim**: `utils/consim_v2.py` inherits the current concept ConSim implementation and only changes prompting to ask the LLM to simulate a text classifier's predictions. It is concepts-only and uses `specification=simulator_consim`, so the cross-family B1/B2 byte-identical invariant above does not apply to this specification.
 - **Rationale anonymization**: `RationalesSimulatability` anonymizes class names appearing inside LP example texts and rationale text using a word-boundary regex (`(?<!\w)<class>(?!\w)`, case-insensitive). Substrings inside other words (e.g. `position` when class is `pos`) are intentionally left untouched. The naive `str.replace` previously used here corrupted unrelated text and is gone; do not reintroduce it.
-- **New vs Old ConSim**: new ConSim asks one evaluation sample per prompt. Old ConSim puts all evaluation samples in one prompt and expects a multi-line response. Both use the same sample selection (cached `local_elements`).
+- **ConSim specifications**: `new_consim` asks one evaluation sample per prompt with classifier-task wording. `simulator_consim` asks one evaluation sample per prompt with explicit model-simulation wording. `old_consim` puts all evaluation samples in one prompt and expects a multi-line response. All use the same sample selection (cached `local_elements`).
 - **Concept creation is integrated into prompt generation**: `make_prompts.py` builds concept artifacts (model, interpretations, global importances, ALL local importances) automatically if they are missing from cache. Heavy ML work (interpreto imports, task model loading) only happens on first run.
 - **Activation/prediction caches**: `get_activations` returns `(activations, predictions)`, and `utils.data.load_or_compute_activations` caches that tuple for train/validation/test splits (`activations.pt`, `validation_activations.pt`, `test_activations.pt`). There is no separate prediction cache.
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
