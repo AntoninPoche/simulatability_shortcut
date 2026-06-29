@@ -23,6 +23,7 @@ scripts/
   make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
+  state.py              # Summarize manifest, prompt JSONL, and v2 score coverage for one judge model
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
   drop_corrupted_prompt_rows.py # Remove corrupted prompt JSONL marker rows (CLI, writes .bak)
 

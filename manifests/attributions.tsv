@@ -18,16 +18,6 @@ python scripts/make_prompts.py attributions GE lime
 python scripts/make_prompts.py attributions GE kernel_shap
 python scripts/make_prompts.py attributions GE occlusion
 python scripts/make_prompts.py attributions GE sobol
-python scripts/make_prompts.py attributions HE saliency
-python scripts/make_prompts.py attributions HE integrated_gradients
-python scripts/make_prompts.py attributions HE smooth_grad
-python scripts/make_prompts.py attributions HE square_grad
-python scripts/make_prompts.py attributions HE var_grad
-python scripts/make_prompts.py attributions HE gradient_shap
-python scripts/make_prompts.py attributions HE lime
-python scripts/make_prompts.py attributions HE kernel_shap
-python scripts/make_prompts.py attributions HE occlusion
-python scripts/make_prompts.py attributions HE sobol
 python scripts/make_prompts.py attributions BIOS saliency
 python scripts/make_prompts.py attributions BIOS integrated_gradients
 python scripts/make_prompts.py attributions BIOS smooth_grad
