@@ -382,6 +382,24 @@ def generate_prompts_for_subset(
                 local_rationales = rationale_by_seed[seed]
             else:
                 local_attributions = attribution_by_seed[seed]
+                corrupted_attribution_indices = [
+                    sample_id
+                    for sample_id, attribution in zip(
+                        local_indices,
+                        local_attributions,
+                        strict=True,
+                    )
+                    if attribution is None
+                ]
+                corrupted_lp_attribution_indices = [
+                    sample_id
+                    for sample_id, attribution in zip(
+                        local_indices[:nb_learning_samples],
+                        local_attributions[:nb_learning_samples],
+                        strict=True,
+                    )
+                    if attribution is None
+                ]
 
             for prompt_type, anonym in itertools.product(prompt_types, [True, False]):
                 prompt_type_name = prompt_type.name.split("_")[0]
@@ -442,6 +460,25 @@ def generate_prompts_for_subset(
                             "key": str_key,
                             "corrupted": True,
                             "corruption_reason": "non_finite_concept_importances",
+                        },
+                        existing_keys,
+                    ):
+                        new_prompts += 1
+                    continue
+
+                if (
+                    explanation_family == "attributions"
+                    and setting.lp_attributions
+                    and corrupted_lp_attribution_indices
+                ):
+                    if append_prompt_group_if_missing(
+                        output_path,
+                        {
+                            "key": str_key,
+                            "corrupted": True,
+                            "corruption_reason": "attribution_computation_failed",
+                            "corrupted_sample_ids": corrupted_attribution_indices,
+                            "corrupted_lp_sample_ids": corrupted_lp_attribution_indices,
                         },
                         existing_keys,
                     ):

@@ -7,6 +7,7 @@ so that make_prompts.py can build AttrSim prompts without recomputing.
 Cache layout:
     {save_root}/attributions/{method_name}.pt
     Contents: dict[int, dict] mapping sample_id -> {"attributions": Tensor, "elements": list[str], "target": int}
+    Failed samples are cached with {"corrupted": True, "attributions": None, ...}.
 """
 
 from __future__ import annotations
@@ -93,8 +94,11 @@ def _serialize_attribution(attr: AttributionOutput, sample_id: int) -> dict:
     }
 
 
-def _reconstruct_attribution(record: dict) -> AttributionOutput:
+def _reconstruct_attribution(record: dict) -> AttributionOutput | None:
     """Reconstruct an AttributionOutput from cached minimal fields."""
+    if record.get("corrupted") or record["attributions"] is None:
+        return None
+
     target = record["target"]
     if isinstance(target, int):
         targets = torch.tensor([target])
@@ -121,7 +125,7 @@ def load_or_compute_attributions(
     device: str,
     batch_size: int = 4,
     dataset_name: str | None = None,
-) -> dict[int, AttributionOutput]:
+) -> dict[int, AttributionOutput | None]:
     """
     Compute or load cached attributions for the given samples.
 
@@ -137,7 +141,7 @@ def load_or_compute_attributions(
         dataset_name: Optional dataset name (used for granularity lookup).
 
     Returns:
-        dict mapping sample_id -> reconstructed AttributionOutput.
+        dict mapping sample_id -> reconstructed AttributionOutput, or None for corrupted samples.
     """
     if len(sample_ids) != len(inputs):
         raise ValueError(
@@ -201,12 +205,40 @@ def load_or_compute_attributions(
             # Explain the predicted class for each sample.
             # targets shape: (batch, 1) — one target class per sample.
             targets = batch_preds.unsqueeze(1)
-            attr_outputs: list[AttributionOutput] = explainer.explain(
-                batch_inputs, targets=targets
-            )
+            try:
+                attr_outputs: list[AttributionOutput] = explainer.explain(
+                    batch_inputs, targets=targets
+                )
 
-            for sid, attr_out in zip(batch_sids, attr_outputs, strict=True):
-                cached[sid] = _serialize_attribution(attr_out, sid)
+                for sid, attr_out in zip(batch_sids, attr_outputs, strict=True):
+                    cached[sid] = _serialize_attribution(attr_out, sid)
+            except Exception as e:
+                print(f"Batch attribution failed for sample_ids {batch_sids}: {e}")
+                for sample_input, target, sid in zip(
+                    batch_inputs,
+                    batch_preds,
+                    batch_sids,
+                    strict=True,
+                ):
+                    try:
+                        attr_out = explainer.explain(
+                            [sample_input],
+                            targets=target.view(1, 1),
+                        )[0]
+                        cached[sid] = _serialize_attribution(attr_out, sid)
+                    except Exception as e_inner:
+                        print(
+                            f"Failed to compute attribution for sample_id {sid}: {e_inner}"
+                        )
+                        cached[sid] = {
+                            "sample_id": sid,
+                            "corrupted": True,
+                            "corruption_reason": "attribution_computation_failed",
+                            "corruption_error": str(e_inner),
+                            "attributions": None,
+                            "elements": [],
+                            "target": int(target.item()),
+                        }
 
         # Persist updated cache
         torch.save(cached, cache_path)
@@ -221,20 +253,20 @@ def load_or_compute_attributions(
 
 
 def group_attributions_by_seed(
-    attributions: dict[int, AttributionOutput],
+    attributions: dict[int, AttributionOutput | None],
     seed_indices: dict[int, list[int]],
-) -> dict[int, list[AttributionOutput]]:
+) -> dict[int, list[AttributionOutput | None]]:
     """
     Group attribution artifacts by seed, preserving sample order.
 
     Arguments:
-        attributions: Mapping from sample_id to AttributionOutput.
+        attributions: Mapping from sample_id to AttributionOutput, or None for corrupted samples.
         seed_indices: Mapping from seed to ordered list of sample_ids.
 
     Returns:
-        dict mapping seed -> list[AttributionOutput] aligned with the seed's sample order.
+        dict mapping seed -> list[AttributionOutput | None] aligned with the seed's sample order.
     """
-    result: dict[int, list[AttributionOutput]] = {}
+    result: dict[int, list[AttributionOutput | None]] = {}
     for seed, indices in seed_indices.items():
         result[seed] = [attributions[idx] for idx in indices]
     return result
