@@ -95,6 +95,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-dir", type=Path, default=Path("data/prompts"))
     parser.add_argument("--score-path", type=Path, default=None)
     parser.add_argument(
+        "--memory-dir",
+        type=Path,
+        default=Path("data/state_memory"),
+        help="Directory for last-run state snapshots (default: data/state_memory).",
+    )
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Do not read or write last-run state snapshots.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=0,
@@ -414,6 +425,26 @@ def score_path_for_model(model: str) -> Path:
     return Path(f"data/consim_{resolved.replace('/', '_')}_v2.csv")
 
 
+def memory_path_for_score(score_path: Path, memory_dir: Path) -> Path:
+    return memory_dir / f"{score_path.stem}.json"
+
+
+def load_memory(memory_path: Path) -> dict[str, dict[str, float | int]]:
+    if not memory_path.exists():
+        return {}
+    with memory_path.open() as handle:
+        payload = json.load(handle)
+    rows = payload.get("rows", {})
+    return rows if isinstance(rows, dict) else {}
+
+
+def write_memory(memory_path: Path, rows: dict[str, dict[str, float | int]]) -> None:
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    with memory_path.open("w") as handle:
+        json.dump({"rows": rows}, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
 def print_table(headers: list[str], rows: list[list[object]]) -> None:
     text_rows = [[str(cell) for cell in row] for row in rows]
     plain_rows = [[strip_ansi(cell) for cell in row] for row in text_rows]
@@ -449,6 +480,33 @@ def coverage_text(existing: int, expected: int) -> str:
     if existing == expected:
         return f"\033[32m{text}\033[0m"
     return f"\033[33m{text}\033[0m"
+
+
+def number_with_delta(value: int, previous: object | None) -> str:
+    try:
+        previous_int = int(previous) if previous is not None else value
+    except (TypeError, ValueError):
+        previous_int = value
+    delta = value - previous_int
+    if delta == 0:
+        return str(value)
+    sign = "+" if delta > 0 else ""
+    return f"{value} ({sign}{delta})"
+
+
+def coverage_with_delta(existing: int, expected: int, previous: object | None) -> str:
+    text = coverage_text(existing, expected)
+    if expected == 0:
+        return text
+    try:
+        previous_ratio = float(previous) if previous is not None else existing / expected
+    except (TypeError, ValueError):
+        previous_ratio = existing / expected
+    delta = (existing / expected) - previous_ratio
+    if abs(delta) < 0.0005:
+        return text
+    sign = "+" if delta > 0 else ""
+    return f"{text} ({sign}{delta:.1%})"
 
 
 def short_list(values: set[object], limit: int = 8) -> str:
@@ -510,8 +568,9 @@ def summarize_coverage(
     score_rows: int,
     score_dupes: int,
     score_path: Path,
+    previous_memory: dict[str, dict[str, float | int]],
     limit: int,
-) -> None:
+) -> dict[str, dict[str, float | int]]:
     print("\nPrompt And Score Coverage")
     print("=========================")
     print(f"score_path: {score_path}")
@@ -530,32 +589,50 @@ def summarize_coverage(
         prompt_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
 
     rows = []
+    current_memory: dict[str, dict[str, float | int]] = {}
     all_triplets = sorted(set(expected_by_triplet) | set(prompt_by_triplet))
     prompt_keys = set(prompt_records)
     for triplet in all_triplets:
+        memory_key = "|".join(triplet)
+        previous = previous_memory.get(memory_key, {})
         expected = expected_by_triplet.get(triplet, set())
         prompts = prompt_by_triplet.get(triplet, set())
         expected_count = len(expected)
         prompt_count = len(prompts)
         if expected_count:
             prompt_expected_count = len(expected & prompt_keys)
-            prompt_cov = coverage_text(prompt_expected_count, expected_count)
+            prompt_ratio = prompt_expected_count / expected_count
+            prompt_cov = coverage_with_delta(
+                prompt_expected_count,
+                expected_count,
+                previous.get("prompt_coverage"),
+            )
             prompt_display = prompt_expected_count
         else:
+            prompt_ratio = 0.0
             prompt_cov = "n/a"
             prompt_display = prompt_count
         scored = len(prompts & score_keys)
+        score_ratio = scored / prompt_count if prompt_count else 0.0
+        current_memory[memory_key] = {
+            "expected": expected_count,
+            "prompts": prompt_display,
+            "prompt_coverage": prompt_ratio,
+            "scores": scored,
+            "score_target": prompt_count,
+            "score_coverage": score_ratio,
+        }
         rows.append(
             [
                 triplet[0],
                 triplet[1],
                 triplet[2],
-                expected_count,
-                prompt_display,
+                number_with_delta(expected_count, previous.get("expected")),
+                number_with_delta(prompt_display, previous.get("prompts")),
                 prompt_cov,
-                scored,
-                prompt_count,
-                coverage_text(scored, prompt_count),
+                number_with_delta(scored, previous.get("scores")),
+                number_with_delta(prompt_count, previous.get("score_target")),
+                coverage_with_delta(scored, prompt_count, previous.get("score_coverage")),
             ]
         )
     print_table(
@@ -647,10 +724,14 @@ def summarize_coverage(
             if len(incomplete) > limit:
                 print(f"... {len(incomplete) - limit} more incomplete rows")
 
+    return current_memory
+
 
 def main() -> None:
     args = parse_args()
     score_path = args.score_path if args.score_path is not None else score_path_for_model(args.model)
+    memory_path = memory_path_for_score(score_path, args.memory_dir)
+    previous_memory = {} if args.no_memory else load_memory(memory_path)
 
     generation_commands, scoring_commands = load_manifest_commands(args.manifest_dir)
     prompt_records, prompt_dupes = load_prompt_keys(args.prompt_dir)
@@ -661,11 +742,13 @@ def main() -> None:
     print(f"generation_manifest_rows: {len(generation_commands)}")
     print(f"scoring_manifest_rows:    {len(scoring_commands)}")
     print(f"prompt_keys:              {len(prompt_records)}")
+    if not args.no_memory:
+        print(f"state_memory:             {memory_path}")
     if prompt_dupes:
         print(f"prompt_duplicate_keys:    {sum(prompt_dupes.values())}")
 
     expected_by_pair = summarize_expected(generation_commands)
-    summarize_coverage(
+    current_memory = summarize_coverage(
         generation_commands,
         scoring_commands,
         expected_by_pair,
@@ -674,8 +757,11 @@ def main() -> None:
         score_rows,
         score_dupes,
         score_path,
+        previous_memory,
         args.limit,
     )
+    if not args.no_memory:
+        write_memory(memory_path, current_memory)
 
 
 if __name__ == "__main__":

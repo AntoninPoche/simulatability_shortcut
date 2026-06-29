@@ -8,9 +8,9 @@ python scripts/llm_scoring.py qwen3.5-9b data/prompts/E_concepts.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_rationales.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_attributions.jsonl
-python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_attributions.jsonl
-python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_concepts.jsonl
-python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_rationales.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_attributions.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_concepts.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_rationales.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_concepts.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_rationales.jsonl
