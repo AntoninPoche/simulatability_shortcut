@@ -81,11 +81,24 @@ def parse_args() -> argparse.Namespace:
         help="Batch size for generation (default: 16).",
     )
     parser.add_argument(
+        "--flush-every-prompts",
+        type=int,
+        default=100,
+        help=(
+            "For new-ConSim, generate and flush results after at most this many "
+            "individual evaluation prompts, rounded to prompt-group boundaries "
+            "(default: 100)."
+        ),
+    )
+    parser.add_argument(
         "--device",
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device for model inference.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.flush_every_prompts < 1:
+        parser.error("--flush-every-prompts must be >= 1")
+    return args
 
 
 def get_score_path(judge_model: str, thinking: bool) -> Path:
@@ -649,10 +662,7 @@ def main() -> None:
                 if not prompt_groups_to_score:
                     continue
 
-                def write_new_consim_batch(new_prompt_groups: list[dict]) -> None:
-                    if not new_prompt_groups:
-                        return
-
+                def write_new_consim_chunk(new_prompt_groups: list[dict]) -> None:
                     full_prompts = []
                     group_slices = []
                     for prompt_group in new_prompt_groups:
@@ -711,6 +721,28 @@ def main() -> None:
                         )
                         handle.flush()
                         total_progress.update(1)
+
+                def write_new_consim_batch(new_prompt_groups: list[dict]) -> None:
+                    if not new_prompt_groups:
+                        return
+
+                    chunk = []
+                    chunk_prompt_count = 0
+                    for prompt_group in new_prompt_groups:
+                        group_prompt_count = len(prompt_group["user_prompts"])
+                        if (
+                            chunk
+                            and chunk_prompt_count + group_prompt_count
+                            > args.flush_every_prompts
+                        ):
+                            write_new_consim_chunk(chunk)
+                            chunk = []
+                            chunk_prompt_count = 0
+
+                        chunk.append(prompt_group)
+                        chunk_prompt_count += group_prompt_count
+
+                    write_new_consim_chunk(chunk)
 
                 new_consim_batch = []
                 for prompt_group in prompt_groups_to_score:
