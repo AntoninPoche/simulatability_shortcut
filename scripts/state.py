@@ -97,8 +97,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=30,
-        help="Maximum incomplete manifest rows to print per section (default: 30).",
+        default=0,
+        help=(
+            "Maximum incomplete manifest rows to print per section. "
+            "Use 0 to hide command lists (default: 0)."
+        ),
     )
     return parser.parse_args()
 
@@ -498,14 +501,21 @@ def summarize_expected(commands: list[ManifestCommand]) -> dict[tuple[str, str],
     return expected_by_pair
 
 
-def summarize_prompt_coverage(
+def summarize_coverage(
     commands: list[ManifestCommand],
+    scoring_commands: list[ManifestCommand],
     expected_by_pair: dict[tuple[str, str], set[tuple]],
-    prompt_keys: set[tuple],
+    prompt_records: dict[tuple, dict[str, object]],
+    score_keys: set[tuple],
+    score_rows: int,
+    score_dupes: int,
+    score_path: Path,
     limit: int,
 ) -> None:
-    print("\nPrompt Coverage vs Expected")
-    print("===========================")
+    print("\nPrompt And Score Coverage")
+    print("=========================")
+    print(f"score_path: {score_path}")
+    print(f"score_rows: {score_rows}; unique_keys: {len(score_keys)}; duplicates: {score_dupes}")
 
     expected_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
     for command in commands:
@@ -515,20 +525,53 @@ def summarize_prompt_coverage(
         for key in command.expected_keys:
             expected_by_triplet[(key[0], family, key[8])].add(key)
 
+    prompt_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
+    for key, record in prompt_records.items():
+        prompt_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
+
     rows = []
-    for triplet, expected in sorted(expected_by_triplet.items()):
-        existing = len(expected & prompt_keys)
+    all_triplets = sorted(set(expected_by_triplet) | set(prompt_by_triplet))
+    prompt_keys = set(prompt_records)
+    for triplet in all_triplets:
+        expected = expected_by_triplet.get(triplet, set())
+        prompts = prompt_by_triplet.get(triplet, set())
+        expected_count = len(expected)
+        prompt_count = len(prompts)
+        if expected_count:
+            prompt_expected_count = len(expected & prompt_keys)
+            prompt_cov = coverage_text(prompt_expected_count, expected_count)
+            prompt_display = prompt_expected_count
+        else:
+            prompt_cov = "n/a"
+            prompt_display = prompt_count
+        scored = len(prompts & score_keys)
         rows.append(
             [
                 triplet[0],
                 triplet[1],
                 triplet[2],
-                existing,
-                len(expected),
-                coverage_text(existing, len(expected)),
+                expected_count,
+                prompt_display,
+                prompt_cov,
+                scored,
+                prompt_count,
+                coverage_text(scored, prompt_count),
             ]
         )
-    print_table(["dataset", "family", "spec", "prompts", "expected", "coverage"], rows)
+    print_table(
+        [
+            "dataset",
+            "family",
+            "spec",
+            "expected",
+            "prompts",
+            "prompt_cov",
+            "scores",
+            "score_target",
+            "score_cov",
+        ],
+        rows,
+    )
 
     incomplete = []
     invalid = []
@@ -543,15 +586,19 @@ def summarize_prompt_coverage(
     if invalid:
         print("\nInvalid Generation Manifest Rows")
         print("--------------------------------")
-        for command in invalid[:limit]:
-            print(f"{command.label}: {command.error} :: {command.command}")
-        if len(invalid) > limit:
-            print(f"... {len(invalid) - limit} more")
+        print(f"{len(invalid)} invalid row(s).")
+        if limit > 0:
+            for command in invalid[:limit]:
+                print(f"{command.label}: {command.error} :: {command.command}")
+            if len(invalid) > limit:
+                print(f"... {len(invalid) - limit} more")
 
     print("\nIncomplete Generation Manifest Rows")
     print("-----------------------------------")
     if not incomplete:
         print("All generation manifest rows are complete.")
+    elif limit <= 0:
+        print(f"{len(incomplete)} incomplete row(s). Use --limit N to list commands.")
     else:
         rows = []
         for command, existing, expected in incomplete[:limit]:
@@ -568,40 +615,6 @@ def summarize_prompt_coverage(
         by_triplet = Counter((key[0], key[8]) for key in unexpected_prompt_keys)
         rows = [[dataset, spec, count] for (dataset, spec), count in sorted(by_triplet.items())]
         print_table(["dataset", "spec", "keys"], rows)
-
-
-def summarize_score_coverage(
-    scoring_commands: list[ManifestCommand],
-    prompt_records: dict[tuple, dict[str, object]],
-    score_keys: set[tuple],
-    score_rows: int,
-    score_dupes: int,
-    score_path: Path,
-    limit: int,
-) -> None:
-    print("\nScore Coverage vs Prompts")
-    print("=========================")
-    print(f"score_path: {score_path}")
-    print(f"score_rows: {score_rows}; unique_keys: {len(score_keys)}; duplicates: {score_dupes}")
-
-    prompt_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
-    for key, record in prompt_records.items():
-        prompt_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
-
-    rows = []
-    for triplet, keys in sorted(prompt_by_triplet.items()):
-        scored = len(keys & score_keys)
-        rows.append(
-            [
-                triplet[0],
-                triplet[1],
-                triplet[2],
-                scored,
-                len(keys),
-                coverage_text(scored, len(keys)),
-            ]
-        )
-    print_table(["dataset", "family", "spec", "scores", "prompts", "coverage"], rows)
 
     if scoring_commands:
         print("\nIncomplete Scoring Manifest Rows")
@@ -624,6 +637,8 @@ def summarize_score_coverage(
                 incomplete.append((command, scored, len(matching)))
         if not incomplete:
             print("All scoring manifest rows are complete against available prompts.")
+        elif limit <= 0:
+            print(f"{len(incomplete)} incomplete row(s). Use --limit N to list commands.")
         else:
             rows = []
             for command, scored, prompts in incomplete[:limit]:
@@ -650,14 +665,10 @@ def main() -> None:
         print(f"prompt_duplicate_keys:    {sum(prompt_dupes.values())}")
 
     expected_by_pair = summarize_expected(generation_commands)
-    summarize_prompt_coverage(
+    summarize_coverage(
         generation_commands,
-        expected_by_pair,
-        set(prompt_records),
-        args.limit,
-    )
-    summarize_score_coverage(
         scoring_commands,
+        expected_by_pair,
         prompt_records,
         score_keys,
         score_rows,

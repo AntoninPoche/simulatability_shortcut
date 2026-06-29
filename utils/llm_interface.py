@@ -27,7 +27,7 @@ from __future__ import annotations
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from interpreto.model_wrapping.llm_interface import LLMInterface, Role
+from interpreto.commons.llm_interface import LLMInterface, Role
 
 
 class HuggingFaceLLM:
