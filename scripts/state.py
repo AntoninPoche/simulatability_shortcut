@@ -165,6 +165,8 @@ def positional_tokens(tokens: list[str]) -> list[str]:
 
 def prompt_file_family(path: Path) -> str:
     stem = path.stem
+    if stem.endswith("_old_consim"):
+        return "concepts"
     if "_" not in stem:
         return "unknown"
     return stem.split("_", 1)[1]

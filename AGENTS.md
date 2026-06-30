@@ -44,7 +44,7 @@ utils/                        # Shared library package
   plot.py                     # Reusable plot helpers for paper figures (violins, bar plots, pairwise matrices)
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
-manifests/                    # Cluster command manifests; *_missing.tsv reruns only currently missing prompt groups
+manifests/                    # Cluster command manifests; old_consim.tsv covers README Stage 1 old-ConSim generation
 notebooks/
   4_compare_consim.ipynb      # Planned: compare any two ConSim specs and any two interpretations; reproduce old-ConSim pairwise matrices
   5_compare_families.ipynb    # Planned: concept/rationale/attribution comparisons and best-method selection for Stage 3
@@ -160,14 +160,14 @@ Goal: reproduce the original concept-based `old_consim` behavior, compare it aga
 | Methods | `seminmf`, `ica`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
-| Samples per seed | `20` in the old/new/v2 comparison commands |
+| Samples per seed | `20` for `new_consim`/`simulator_consim`; `40` for `old_consim` |
 
 Prompt generation:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 40
 ```
 
 Next notebook work:
@@ -184,11 +184,11 @@ Debug before larger runs:
 ```bash
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT seminmf --interpretation topk --seeds 0 --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_consim_v2.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 40
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 40
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neurons --interpretation topk --seeds 0 --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 40
 ```
 
 ### Stage 2 — extend to other explanation families

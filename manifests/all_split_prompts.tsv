@@ -22,3 +22,11 @@ python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_concepts__metho
 python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_concepts__method-SemiNMF.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_concepts__method-VanillaSAE.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_concepts__method-baseline.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_concepts__method-baseline.jsonl

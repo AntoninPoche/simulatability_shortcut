@@ -32,14 +32,14 @@ The comparison grid is:
 | Concept methods | `seminmf`, `ica`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
-| Samples per seed | `20` in the comparison commands below |
+| Samples per seed | `20` for `new_consim`/`simulator_consim`; `40` for `old_consim` |
 
 Prompt generation commands:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
 CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 40
 ```
 
 Scoring commands:
@@ -119,7 +119,7 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT semi
 2. Verify old ConSim loads the same cached concept resources:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT seminmf --interpretation topk --seeds 0 --nb-samples 40
 ```
 
 3. Verify SAE concept training and prompt generation:
@@ -131,14 +131,14 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT vani
 4. Verify old ConSim works for an SAE method:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT vanilla_sae --interpretation topk --seeds 0 --nb-samples 40
 ```
 
 5. Verify neurons-as-concepts prompt generation:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neurons --interpretation topk --seeds 0 --nb-samples 20
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 40
 ```
 
 6. Score one small prompt file with the intended judge:
