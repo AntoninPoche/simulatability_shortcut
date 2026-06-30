@@ -23,8 +23,10 @@ scripts/
   make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
   make_best_prompts.py  # Planned: subset best methods from data/prompts/ into data/best_prompts/ for multi-judge scoring
+  split_prompt_file.py  # Split large prompt JSONL files into derived per-field files without touching originals
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
   state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
+  drop_method_rows.py   # Drop one method from prompt JSONL files and score CSVs (CLI, writes .bak)
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
   drop_corrupted_prompt_rows.py # Remove corrupted prompt JSONL marker rows (CLI, writes .bak)
 
@@ -103,6 +105,14 @@ python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
 ```
 
+**Split large prompt files** (creates derived JSONL files; originals are untouched):
+
+```bash
+python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl  # split by method into data/prompt_splits/
+python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl --by specification
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_concepts__method-seminmf.jsonl
+```
+
 **Drop rows from a score CSV** (to force re-scoring after regenerating prompts):
 
 ```bash
@@ -115,6 +125,15 @@ python scripts/drop_score_rows.py data/consim_Qwen_Qwen3.5-9B.csv dataset=RT spe
 ```
 
 Writes `<csv>.bak` first unless `--no-backup` is given.
+
+**Drop one method from all prompts and scores**:
+
+```bash
+python scripts/drop_method_rows.py batchtopk --dry-run
+python scripts/drop_method_rows.py batchtopk
+```
+
+Scans `data/prompts/`, `data/prompt_splits/`, `data/best_prompts/`, and `data/consim*.csv`. Writes `<file>.bak` first unless `--no-backup` is given.
 
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 

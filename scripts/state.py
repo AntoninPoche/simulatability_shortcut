@@ -712,6 +712,7 @@ def summarize_coverage(
     )
 
     incomplete = []
+    corrupted_generation = []
     invalid = []
     for command in commands:
         if command.error:
@@ -723,6 +724,16 @@ def summarize_coverage(
         existing_valid = len(actionable_keys & prompt_keys)
         existing_corrupted = len(actionable_keys & corrupted_prompt_keys)
         existing = len(actionable_keys & existing_prompt_keys)
+        if existing_corrupted:
+            corrupted_generation.append(
+                (
+                    command,
+                    existing_valid,
+                    existing_corrupted,
+                    len(actionable_keys) - existing,
+                    len(actionable_keys),
+                )
+            )
         if existing < len(actionable_keys):
             incomplete.append(
                 (
@@ -757,6 +768,23 @@ def summarize_coverage(
         print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
         if len(incomplete) > limit:
             print(f"... {len(incomplete) - limit} more incomplete rows")
+
+    print("\nCorrupted Generation Manifest Rows")
+    print("----------------------------------")
+    if not corrupted_generation:
+        print("No generation manifest rows contain corrupted prompt markers.")
+    elif limit <= 0:
+        print(
+            f"{len(corrupted_generation)} row(s) contain corrupted prompt markers. "
+            "Use --limit N to list commands."
+        )
+    else:
+        rows = []
+        for command, valid, corrupted, missing, expected in corrupted_generation[:limit]:
+            rows.append([command.label, valid, corrupted, missing, expected, command.command])
+        print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
+        if len(corrupted_generation) > limit:
+            print(f"... {len(corrupted_generation) - limit} more corrupted rows")
 
     expected_all = set().union(*expected_by_pair.values()) if expected_by_pair else set()
     unexpected_prompt_keys = existing_prompt_keys - expected_all

@@ -2,8 +2,6 @@ python scripts/make_prompts.py concepts E seminmf --interpretation topk
 python scripts/make_prompts.py concepts E seminmf --interpretation llm
 python scripts/make_prompts.py concepts E ica --interpretation topk
 python scripts/make_prompts.py concepts E ica --interpretation llm
-python scripts/make_prompts.py concepts E kmeans --interpretation topk
-python scripts/make_prompts.py concepts E kmeans --interpretation llm
 python scripts/make_prompts.py concepts E pca --interpretation topk
 python scripts/make_prompts.py concepts E pca --interpretation llm
 python scripts/make_prompts.py concepts E svd --interpretation topk
@@ -17,8 +15,6 @@ python scripts/make_prompts.py concepts GE seminmf --interpretation topk
 python scripts/make_prompts.py concepts GE seminmf --interpretation llm
 python scripts/make_prompts.py concepts GE ica --interpretation topk
 python scripts/make_prompts.py concepts GE ica --interpretation llm
-python scripts/make_prompts.py concepts GE kmeans --interpretation topk
-python scripts/make_prompts.py concepts GE kmeans --interpretation llm
 python scripts/make_prompts.py concepts GE pca --interpretation topk
 python scripts/make_prompts.py concepts GE pca --interpretation llm
 python scripts/make_prompts.py concepts GE svd --interpretation topk
@@ -32,8 +28,6 @@ python scripts/make_prompts.py concepts BIOS seminmf --interpretation topk
 python scripts/make_prompts.py concepts BIOS seminmf --interpretation llm
 python scripts/make_prompts.py concepts BIOS ica --interpretation topk
 python scripts/make_prompts.py concepts BIOS ica --interpretation llm
-python scripts/make_prompts.py concepts BIOS kmeans --interpretation topk
-python scripts/make_prompts.py concepts BIOS kmeans --interpretation llm
 python scripts/make_prompts.py concepts BIOS pca --interpretation topk
 python scripts/make_prompts.py concepts BIOS pca --interpretation llm
 python scripts/make_prompts.py concepts BIOS svd --interpretation topk
@@ -47,8 +41,6 @@ python scripts/make_prompts.py concepts AG seminmf --interpretation topk
 python scripts/make_prompts.py concepts AG seminmf --interpretation llm
 python scripts/make_prompts.py concepts AG ica --interpretation topk
 python scripts/make_prompts.py concepts AG ica --interpretation llm
-python scripts/make_prompts.py concepts AG kmeans --interpretation topk
-python scripts/make_prompts.py concepts AG kmeans --interpretation llm
 python scripts/make_prompts.py concepts AG pca --interpretation topk
 python scripts/make_prompts.py concepts AG pca --interpretation llm
 python scripts/make_prompts.py concepts AG svd --interpretation topk
@@ -62,8 +54,6 @@ python scripts/make_prompts.py concepts RT seminmf --interpretation topk
 python scripts/make_prompts.py concepts RT seminmf --interpretation llm
 python scripts/make_prompts.py concepts RT ica --interpretation topk
 python scripts/make_prompts.py concepts RT ica --interpretation llm
-python scripts/make_prompts.py concepts RT kmeans --interpretation topk
-python scripts/make_prompts.py concepts RT kmeans --interpretation llm
 python scripts/make_prompts.py concepts RT pca --interpretation topk
 python scripts/make_prompts.py concepts RT pca --interpretation llm
 python scripts/make_prompts.py concepts RT svd --interpretation topk
@@ -77,8 +67,6 @@ python scripts/make_prompts.py concepts IMDB seminmf --interpretation topk
 python scripts/make_prompts.py concepts IMDB seminmf --interpretation llm
 python scripts/make_prompts.py concepts IMDB ica --interpretation topk
 python scripts/make_prompts.py concepts IMDB ica --interpretation llm
-python scripts/make_prompts.py concepts IMDB kmeans --interpretation topk
-python scripts/make_prompts.py concepts IMDB kmeans --interpretation llm
 python scripts/make_prompts.py concepts IMDB pca --interpretation topk
 python scripts/make_prompts.py concepts IMDB pca --interpretation llm
 python scripts/make_prompts.py concepts IMDB svd --interpretation topk
