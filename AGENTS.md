@@ -23,7 +23,7 @@ scripts/
   make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
-  state.py              # Summarize manifest, prompt JSONL, and v2 score coverage for one judge model
+  state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
   drop_corrupted_prompt_rows.py # Remove corrupted prompt JSONL marker rows (CLI, writes .bak)
 
@@ -45,7 +45,7 @@ manifests/                    # Cluster command manifests; *_missing.tsv reruns 
 notebooks/
   4_compare_consim.ipynb      # Old/new ConSim score comparisons and diagnostics
   5_compare_families.ipynb    # Concept/rationale/attribution prompt-type score comparisons
-generation_concept_tutorial.ipynb  # Interpreto concept tutorial, including BatchTopK SAE loss setup
+generation_concept_tutorial.ipynb  # Interpreto concept tutorial
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
 data/                         # Gitignored artifacts: activation/prediction caches, prompts, scores
 ```
@@ -115,7 +115,7 @@ Writes `<csv>.bak` first unless `--no-backup` is given.
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
 ```bash
-./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
+./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
 ./sequence.sh scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl,data/prompts/HE_concepts.jsonl
 ```
 
@@ -134,7 +134,7 @@ Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consi
 | Axis | Values |
 | --- | --- |
 | Datasets | `BIOS`, `RT`, `AG`, `IMDB` |
-| Methods | `seminmf`, `ica`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes` |
+| Methods | `seminmf`, `ica`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
 | Samples per seed | `20` by default |
@@ -142,9 +142,9 @@ Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consi
 Prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
 ```
 
 Debug before larger runs:
@@ -167,15 +167,15 @@ After Phase 1 is debugged, extend to rationale, attribution, and concept simulat
 
 ### `make_prompts.py`
 
-Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`.
+Positional: `explanation_family` (concepts/rationales/attributions), `dataset`, `method` (concept method or attribution method; not used for rationales). Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for rationales and concept LLM interpretation, default llama3.2-3b), `--rationale-batch-size`, `--max-new-tokens`, `--seeds` (e.g. "0-49"), `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`.
 
 ### `make_prompts_old_consim.py`
 
-Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place). For `classes`, `--interpretation` is ignored and prompt keys store `None`.
+Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--seeds`, `--nb-samples`, `--device`, `--batch-size`, `--refresh-existing` (rewrite matching existing JSONL keys in place). For `classes`, `--interpretation` is ignored and prompt keys store `None`.
 
 ### `make_prompts_consim_v2.py`
 
-Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for concept LLM interpretation, default llama3.2-3b), `--seeds`, `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`. Writes concept prompt groups to `data/prompts/{dataset}_concepts.jsonl` with `specification=simulator_consim`.
+Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for concept LLM interpretation, default llama3.2-3b), `--seeds`, `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`. Writes concept prompt groups to `data/prompts/{dataset}_concepts.jsonl` with `specification=simulator_consim`.
 
 ### `llm_scoring.py`
 
@@ -191,7 +191,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 
 ## Architecture Notes
 
-- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/BatchTopKSAE/VanillaSAE/NeuronsAsConcepts with `topk`/`llm` interpretation keys), rationales (LLM generated), and attributions (gradient-based).
+- **Three explanation families**: concepts (SemiNMF/ICA/KMeans/PCA/SVD/VanillaSAE/NeuronsAsConcepts with `topk`/`llm` interpretation keys), rationales (LLM generated), and attributions (gradient-based).
 - **Prompt harmonization across families**: `utils/consim.py`, `utils/ratsim.py`, and `utils/attrsim.py` share the same prompt skeleton:
   - Task description uses the canonical ConSim wording (`"You are a classifier. Your task is to assign a label to the evaluation sample. ..."`) with one explanation-specific sentence appended when the family-specific LP block is enabled (concept importances, attributions, rationales).
   - `The classes are: [...]` line is identical, parsed by `extract_allowed_labels` in `llm_scoring.py`.
@@ -208,6 +208,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
 - **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. New-ConSim prompts are generated in chunks bounded by `--flush-every-prompts` individual evaluation prompts (default 100), then score rows and raw generations are flushed at prompt-group boundaries. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
+- **State coverage**: `scripts/state.py` reports valid prompt coverage as `valid% (+corrupted%)` when corrupted prompt-marker rows exist. Corrupted rows count as existing for prompt-generation rerun purposes, because prompt scripts skip those keys unless corrupted rows are explicitly dropped. Incomplete generation manifest rows ignore baseline prompt types (`B*`/`AB*`) so shared baselines do not make method-specific prompt-generation commands look missing.
 - **Score v2 outputs**: `llm_scoring.py` writes new runs to `data/consim_{model}_v2.csv` and leaves v1 CSVs untouched. V2 columns are `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score,num_correct,num_valid,num_expected`. Invalid-format answers (`None` after parsing against allowed labels) are excluded from the denominator; `score = num_correct / num_valid` only when `num_valid >= ceil(0.7 * num_expected)`, otherwise `score` is `NaN`. Raw generations are appended per prompt group to `data/generations/{model}.jsonl` for offline parser/debug reruns. Old-ConSim token budgets add a 128-token slack above the per-line estimate.
 - **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
 - **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.

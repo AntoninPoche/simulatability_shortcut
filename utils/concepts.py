@@ -20,7 +20,6 @@ INTERPRETATION_FILENAMES: dict[str | None, str] = {
 def get_concept_method_class(method_key: str):
     """Lazy-load the interpreto concept class for the given CLI key."""
     from interpreto.concepts import (
-        BatchTopKSAEConcepts,
         ICAConcepts,
         KMeansConcepts,
         NeuronsAsConcepts,
@@ -36,7 +35,6 @@ def get_concept_method_class(method_key: str):
         "kmeans": KMeansConcepts,
         "pca": PCAConcepts,
         "svd": SVDConcepts,
-        "batchtopk_sae": BatchTopKSAEConcepts,
         "vanilla_sae": VanillaSAEConcepts,
         "neurons": NeuronsAsConcepts,
     }
@@ -442,13 +440,6 @@ def load_or_fit_concept_model(
     batch_size: int,
 ):
     method_name = name_for(method)
-    concept_init_kwargs: dict[str, Any] = {}
-    if method_name == "BatchTopKSAEConcepts":
-        if nb_concepts is None:
-            raise ValueError("BatchTopKSAEConcepts requires nb_concepts.")
-        # Interpreto's installed BatchTopK SAE keeps a top-k across the whole batch.
-        # Newer APIs may expose this as batch_top_k; this environment falls back to top_k.
-        concept_init_kwargs["top_k"] = max(1, int(nb_concepts / 3)) * batch_size
 
     if method_name == "NeuronsAsConcepts":
         concept_explainer = method(splitter)
@@ -463,7 +454,6 @@ def load_or_fit_concept_model(
         splitter,
         nb_concepts=nb_concepts,
         device=device,
-        **concept_init_kwargs,
     )
 
     concept_model_path = concept_dir / "concept_model.pt"

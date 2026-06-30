@@ -18,7 +18,7 @@ The comparison grid is:
 | Axis | Values |
 | --- | --- |
 | Datasets | `BIOS`, `RT`, `AG`, `IMDB` |
-| Concept methods | `seminmf`, `ica`, `pca`, `svd`, `batchtopk_sae`, `vanilla_sae`, `neurons` |
+| Concept methods | `seminmf`, `ica`, `pca`, `svd`, `vanilla_sae`, `neurons` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
 | Samples per seed | `20` by default |
@@ -26,8 +26,8 @@ The comparison grid is:
 Prompt generation commands:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,batchtopk_sae,vanilla_sae,neurons --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons --interpretation topk
 ```
 
 Scoring commands:

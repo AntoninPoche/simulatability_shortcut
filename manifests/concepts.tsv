@@ -8,8 +8,6 @@ python scripts/make_prompts.py concepts E pca --interpretation topk
 python scripts/make_prompts.py concepts E pca --interpretation llm
 python scripts/make_prompts.py concepts E svd --interpretation topk
 python scripts/make_prompts.py concepts E svd --interpretation llm
-python scripts/make_prompts.py concepts E batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts E batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts E vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts E vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts E neurons --interpretation topk
@@ -25,8 +23,6 @@ python scripts/make_prompts.py concepts GE pca --interpretation topk
 python scripts/make_prompts.py concepts GE pca --interpretation llm
 python scripts/make_prompts.py concepts GE svd --interpretation topk
 python scripts/make_prompts.py concepts GE svd --interpretation llm
-python scripts/make_prompts.py concepts GE batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts GE batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts GE vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts GE vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts GE neurons --interpretation topk
@@ -42,8 +38,6 @@ python scripts/make_prompts.py concepts BIOS pca --interpretation topk
 python scripts/make_prompts.py concepts BIOS pca --interpretation llm
 python scripts/make_prompts.py concepts BIOS svd --interpretation topk
 python scripts/make_prompts.py concepts BIOS svd --interpretation llm
-python scripts/make_prompts.py concepts BIOS batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts BIOS batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts BIOS vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts BIOS vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts BIOS neurons --interpretation topk
@@ -59,8 +53,6 @@ python scripts/make_prompts.py concepts AG pca --interpretation topk
 python scripts/make_prompts.py concepts AG pca --interpretation llm
 python scripts/make_prompts.py concepts AG svd --interpretation topk
 python scripts/make_prompts.py concepts AG svd --interpretation llm
-python scripts/make_prompts.py concepts AG batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts AG batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts AG vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts AG vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts AG neurons --interpretation topk
@@ -76,8 +68,6 @@ python scripts/make_prompts.py concepts RT pca --interpretation topk
 python scripts/make_prompts.py concepts RT pca --interpretation llm
 python scripts/make_prompts.py concepts RT svd --interpretation topk
 python scripts/make_prompts.py concepts RT svd --interpretation llm
-python scripts/make_prompts.py concepts RT batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts RT batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts RT vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts RT vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts RT neurons --interpretation topk
@@ -93,8 +83,6 @@ python scripts/make_prompts.py concepts IMDB pca --interpretation topk
 python scripts/make_prompts.py concepts IMDB pca --interpretation llm
 python scripts/make_prompts.py concepts IMDB svd --interpretation topk
 python scripts/make_prompts.py concepts IMDB svd --interpretation llm
-python scripts/make_prompts.py concepts IMDB batchtopk_sae --interpretation topk
-python scripts/make_prompts.py concepts IMDB batchtopk_sae --interpretation llm
 python scripts/make_prompts.py concepts IMDB vanilla_sae --interpretation topk
 python scripts/make_prompts.py concepts IMDB vanilla_sae --interpretation llm
 python scripts/make_prompts.py concepts IMDB neurons --interpretation topk

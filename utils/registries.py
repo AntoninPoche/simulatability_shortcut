@@ -13,7 +13,6 @@ CONCEPT_METHOD_NAMES: dict[str, str] = {
     "kmeans": "KMeans",
     "pca": "PCA",
     "svd": "SVD",
-    "batchtopk_sae": "BatchTopKSAE",
     "vanilla_sae": "VanillaSAE",
     "neurons": "NeuronsAs",
     "classes": "ClassesAs",
