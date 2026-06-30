@@ -386,8 +386,11 @@ def load_manifest_commands(manifest_dir: Path) -> tuple[list[ManifestCommand], l
     return generation, scoring
 
 
-def load_prompt_keys(prompt_dir: Path) -> tuple[dict[tuple, dict[str, object]], Counter]:
+def load_prompt_keys(
+    prompt_dir: Path,
+) -> tuple[dict[tuple, dict[str, object]], dict[tuple, dict[str, object]], Counter]:
     prompts: dict[tuple, dict[str, object]] = {}
+    corrupted_prompts: dict[tuple, dict[str, object]] = {}
     duplicates = Counter()
     for prompt_path in sorted(prompt_dir.glob("*.jsonl")):
         family = prompt_file_family(prompt_path)
@@ -396,17 +399,16 @@ def load_prompt_keys(prompt_dir: Path) -> tuple[dict[tuple, dict[str, object]], 
                 if not line.strip():
                     continue
                 prompt_group = json.loads(line)
-                if prompt_group.get("corrupted"):
-                    continue
                 key = key_tuple_from_prompt_key(prompt_group["key"])
-                if key in prompts:
+                target = corrupted_prompts if prompt_group.get("corrupted") else prompts
+                if key in prompts or key in corrupted_prompts:
                     duplicates[(prompt_path.name, key[0], key[8])] += 1
-                prompts[key] = {
+                target[key] = {
                     "path": prompt_path,
                     "line_no": line_no,
                     "family": family,
                 }
-    return prompts, duplicates
+    return prompts, corrupted_prompts, duplicates
 
 
 def load_score_keys(score_path: Path) -> tuple[set[tuple], int, int]:
@@ -482,6 +484,21 @@ def coverage_text(existing: int, expected: int) -> str:
     return f"\033[33m{text}\033[0m"
 
 
+def coverage_text_with_corrupted(valid: int, corrupted: int, expected: int) -> str:
+    if expected == 0:
+        return "n/a"
+    valid_ratio = valid / expected
+    total_ratio = (valid + corrupted) / expected
+    text = f"{valid_ratio:.1%}"
+    if corrupted:
+        text += f" (+{corrupted / expected:.1%})"
+    if valid == 0 and corrupted == 0:
+        return f"\033[31m{text}\033[0m"
+    if total_ratio >= 1:
+        return f"\033[32m{text}\033[0m"
+    return f"\033[33m{text}\033[0m"
+
+
 def number_with_delta(value: int, previous: object | None) -> str:
     try:
         previous_int = int(previous) if previous is not None else value
@@ -507,6 +524,33 @@ def coverage_with_delta(existing: int, expected: int, previous: object | None) -
         return text
     sign = "+" if delta > 0 else ""
     return f"{text} ({sign}{delta:.1%})"
+
+
+def coverage_with_corrupted_delta(
+    valid: int,
+    corrupted: int,
+    expected: int,
+    previous: object | None,
+) -> str:
+    text = coverage_text_with_corrupted(valid, corrupted, expected)
+    if expected == 0:
+        return text
+    try:
+        previous_ratio = float(previous) if previous is not None else valid / expected
+    except (TypeError, ValueError):
+        previous_ratio = valid / expected
+    delta = (valid / expected) - previous_ratio
+    if abs(delta) < 0.0005:
+        return text
+    sign = "+" if delta > 0 else ""
+    return f"{text} ({sign}{delta:.1%})"
+
+
+def is_baseline_prompt_type(prompt_type: object) -> bool:
+    text = str(prompt_type)
+    if text.startswith("A"):
+        text = text[1:]
+    return text.startswith("B")
 
 
 def short_list(values: set[object], limit: int = 8) -> str:
@@ -564,6 +608,7 @@ def summarize_coverage(
     scoring_commands: list[ManifestCommand],
     expected_by_pair: dict[tuple[str, str], set[tuple]],
     prompt_records: dict[tuple, dict[str, object]],
+    corrupted_prompt_records: dict[tuple, dict[str, object]],
     score_keys: set[tuple],
     score_rows: int,
     score_dupes: int,
@@ -575,6 +620,7 @@ def summarize_coverage(
     print("=========================")
     print(f"score_path: {score_path}")
     print(f"score_rows: {score_rows}; unique_keys: {len(score_keys)}; duplicates: {score_dupes}")
+    print(f"corrupted_prompt_keys: {len(corrupted_prompt_records)}")
 
     expected_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
     for command in commands:
@@ -588,28 +634,40 @@ def summarize_coverage(
     for key, record in prompt_records.items():
         prompt_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
 
+    corrupted_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
+    for key, record in corrupted_prompt_records.items():
+        corrupted_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
+
     rows = []
     current_memory: dict[str, dict[str, float | int]] = {}
-    all_triplets = sorted(set(expected_by_triplet) | set(prompt_by_triplet))
+    all_triplets = sorted(
+        set(expected_by_triplet) | set(prompt_by_triplet) | set(corrupted_by_triplet)
+    )
     prompt_keys = set(prompt_records)
+    corrupted_prompt_keys = set(corrupted_prompt_records)
+    existing_prompt_keys = prompt_keys | corrupted_prompt_keys
     for triplet in all_triplets:
         memory_key = "|".join(triplet)
         previous = previous_memory.get(memory_key, {})
         expected = expected_by_triplet.get(triplet, set())
         prompts = prompt_by_triplet.get(triplet, set())
+        corrupted_prompts = corrupted_by_triplet.get(triplet, set())
         expected_count = len(expected)
         prompt_count = len(prompts)
         if expected_count:
             prompt_expected_count = len(expected & prompt_keys)
+            corrupted_expected_count = len(expected & corrupted_prompt_keys)
             prompt_ratio = prompt_expected_count / expected_count
-            prompt_cov = coverage_with_delta(
+            prompt_cov = coverage_with_corrupted_delta(
                 prompt_expected_count,
+                corrupted_expected_count,
                 expected_count,
                 previous.get("prompt_coverage"),
             )
             prompt_display = prompt_expected_count
         else:
             prompt_ratio = 0.0
+            corrupted_expected_count = len(corrupted_prompts)
             prompt_cov = "n/a"
             prompt_display = prompt_count
         scored = len(prompts & score_keys)
@@ -617,6 +675,7 @@ def summarize_coverage(
         current_memory[memory_key] = {
             "expected": expected_count,
             "prompts": prompt_display,
+            "corrupted_prompts": corrupted_expected_count,
             "prompt_coverage": prompt_ratio,
             "scores": scored,
             "score_target": prompt_count,
@@ -629,6 +688,7 @@ def summarize_coverage(
                 triplet[2],
                 number_with_delta(expected_count, previous.get("expected")),
                 number_with_delta(prompt_display, previous.get("prompts")),
+                number_with_delta(corrupted_expected_count, previous.get("corrupted_prompts")),
                 prompt_cov,
                 number_with_delta(scored, previous.get("scores")),
                 number_with_delta(prompt_count, previous.get("score_target")),
@@ -642,6 +702,7 @@ def summarize_coverage(
             "spec",
             "expected",
             "prompts",
+            "corrupted",
             "prompt_cov",
             "scores",
             "score_target",
@@ -656,9 +717,22 @@ def summarize_coverage(
         if command.error:
             invalid.append(command)
             continue
-        existing = len(command.expected_keys & prompt_keys)
-        if existing < len(command.expected_keys):
-            incomplete.append((command, existing, len(command.expected_keys)))
+        actionable_keys = {
+            key for key in command.expected_keys if not is_baseline_prompt_type(key[7])
+        }
+        existing_valid = len(actionable_keys & prompt_keys)
+        existing_corrupted = len(actionable_keys & corrupted_prompt_keys)
+        existing = len(actionable_keys & existing_prompt_keys)
+        if existing < len(actionable_keys):
+            incomplete.append(
+                (
+                    command,
+                    existing_valid,
+                    existing_corrupted,
+                    len(actionable_keys) - existing,
+                    len(actionable_keys),
+                )
+            )
 
     if invalid:
         print("\nInvalid Generation Manifest Rows")
@@ -678,14 +752,14 @@ def summarize_coverage(
         print(f"{len(incomplete)} incomplete row(s). Use --limit N to list commands.")
     else:
         rows = []
-        for command, existing, expected in incomplete[:limit]:
-            rows.append([command.label, existing, expected, command.command])
-        print_table(["row", "prompts", "expected", "command"], rows)
+        for command, valid, corrupted, missing, expected in incomplete[:limit]:
+            rows.append([command.label, valid, corrupted, missing, expected, command.command])
+        print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
         if len(incomplete) > limit:
             print(f"... {len(incomplete) - limit} more incomplete rows")
 
     expected_all = set().union(*expected_by_pair.values()) if expected_by_pair else set()
-    unexpected_prompt_keys = prompt_keys - expected_all
+    unexpected_prompt_keys = existing_prompt_keys - expected_all
     if unexpected_prompt_keys:
         print("\nPrompt Keys Not Required By Generation Manifests")
         print("------------------------------------------------")
@@ -734,7 +808,9 @@ def main() -> None:
     previous_memory = {} if args.no_memory else load_memory(memory_path)
 
     generation_commands, scoring_commands = load_manifest_commands(args.manifest_dir)
-    prompt_records, prompt_dupes = load_prompt_keys(args.prompt_dir)
+    prompt_records, corrupted_prompt_records, prompt_dupes = load_prompt_keys(
+        args.prompt_dir
+    )
     score_keys, score_rows, score_dupes = load_score_keys(score_path)
 
     print("State Summary")
@@ -742,6 +818,7 @@ def main() -> None:
     print(f"generation_manifest_rows: {len(generation_commands)}")
     print(f"scoring_manifest_rows:    {len(scoring_commands)}")
     print(f"prompt_keys:              {len(prompt_records)}")
+    print(f"corrupted_prompt_keys:    {len(corrupted_prompt_records)}")
     if not args.no_memory:
         print(f"state_memory:             {memory_path}")
     if prompt_dupes:
@@ -753,6 +830,7 @@ def main() -> None:
         scoring_commands,
         expected_by_pair,
         prompt_records,
+        corrupted_prompt_records,
         score_keys,
         score_rows,
         score_dupes,
