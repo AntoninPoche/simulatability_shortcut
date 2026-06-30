@@ -9,6 +9,7 @@ type to its baseline prompt type (e.g. ``{"C1": "B1", "C2": "B2", "AC1":
 from __future__ import annotations
 
 import os
+from itertools import combinations, product
 from typing import Mapping, Optional, Sequence
 
 import matplotlib as mpl
@@ -16,6 +17,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import ttest_rel
 
 
 def plot_accuracies_violins(
@@ -430,3 +432,265 @@ DEFAULT_BASELINE_FOR: dict[str, str] = {
     "AC2": "AB2",
     "AC3": "AB2",
 }
+
+
+def plot_difference_bars(
+    stats: pd.DataFrame,
+    *,
+    value_col: str = "mean_diff",
+    err_col: str = "std_diff",
+    item_col: str = "prompt_type",
+    panel_col: str = "classes_subset",
+    ylabel: str = "Score difference",
+    title: Optional[str] = None,
+    positive_color: str = "#4c72b0",
+    negative_color: str = "#c44e52",
+    save_dir: Optional[str] = None,
+    file_name: Optional[str] = None,
+) -> tuple[plt.Figure, np.ndarray]:
+    """Plot bucketed score differences as simple signed bar plots.
+
+    ``stats`` is expected to already contain one row per displayed bar. This
+    helper intentionally does not compute statistics: notebooks keep filtering
+    and aggregation explicit, while this function centralizes the visual style.
+    """
+    if stats.empty:
+        raise ValueError("Cannot plot an empty stats dataframe.")
+
+    panels = list(stats[panel_col].drop_duplicates())
+    fig, axes = plt.subplots(
+        len(panels),
+        1,
+        figsize=(max(7, 0.7 * stats[item_col].nunique() + 3), 4 * len(panels)),
+        sharey=True,
+        squeeze=False,
+    )
+
+    for ax, panel_value in zip(axes[:, 0], panels):
+        sub = (
+            stats[stats[panel_col] == panel_value]
+            .sort_values(value_col, ascending=False)
+            .reset_index(drop=True)
+        )
+        x = np.arange(len(sub))
+        colors = [positive_color if value >= 0 else negative_color for value in sub[value_col]]
+
+        ax.bar(
+            x,
+            sub[value_col],
+            yerr=sub[err_col] if err_col in sub else None,
+            capsize=4,
+            color=colors,
+            edgecolor="black",
+            linewidth=0.6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(sub[item_col], rotation=45, ha="right", fontsize=8)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{panel_col}={panel_value}")
+        ax.grid(axis="y", linestyle=":", alpha=0.5)
+
+    axes[-1, 0].set_xlabel(item_col)
+    if title is not None:
+        fig.suptitle(title, fontsize=10)
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
+    else:
+        fig.tight_layout()
+
+    if save_dir is not None and file_name is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fig.savefig(os.path.join(save_dir, file_name))
+
+    return fig, axes
+
+
+def plot_ranked_score_bars(
+    stats: pd.DataFrame,
+    *,
+    label_col: str = "label",
+    value_col: str = "mean_score",
+    err_col: str = "std_score",
+    color_col: Optional[str] = None,
+    color_map: Optional[Mapping[str, str]] = None,
+    ylabel: str = "Score",
+    title: Optional[str] = None,
+    ylim: tuple[float, float] = (0, 1.05),
+    ax: Optional[plt.Axes] = None,
+    save_dir: Optional[str] = None,
+    file_name: Optional[str] = None,
+) -> plt.Axes:
+    """Plot one ranked bar panel with optional colors by category.
+
+    ``stats`` should contain one row per bar. The function sorts bars by
+    ``value_col`` descending, because most paper panels rank methods from best
+    to worst. It does not compute any aggregation.
+    """
+    if stats.empty:
+        raise ValueError("Cannot plot an empty stats dataframe.")
+
+    sub = stats.sort_values(value_col, ascending=False).reset_index(drop=True)
+    x = np.arange(len(sub))
+
+    if color_col is not None:
+        if color_map is None:
+            tab10 = mpl.colormaps["tab10"].colors
+            values = list(sub[color_col].drop_duplicates())
+            color_map = {value: tab10[i % len(tab10)] for i, value in enumerate(values)}
+        colors = [color_map.get(value, "#999999") for value in sub[color_col]]
+    else:
+        colors = "#4c72b0"
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(max(8, 0.75 * len(sub) + 2), 5))
+    else:
+        fig = ax.figure
+
+    ax.bar(
+        x,
+        sub[value_col],
+        yerr=sub[err_col] if err_col in sub else None,
+        capsize=4,
+        color=colors,
+        edgecolor="black",
+        linewidth=0.6,
+    )
+    ax.set_ylim(*ylim)
+    ax.set_xticks(x)
+    ax.set_xticklabels(sub[label_col], rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel(ylabel)
+    ax.grid(axis="y", linestyle=":", alpha=0.5)
+    if title is not None:
+        ax.set_title(title)
+
+    if color_col is not None and color_map is not None:
+        legend_values = [value for value in color_map if value in set(sub[color_col])]
+        handles = [
+            patches.Patch(facecolor=color_map[value], edgecolor="black", label=str(value))
+            for value in legend_values
+        ]
+        if handles:
+            ax.legend(handles=handles, loc="upper right", title=color_col)
+
+    fig.tight_layout()
+    if save_dir is not None and file_name is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fig.savefig(os.path.join(save_dir, file_name))
+
+    return ax
+
+
+def plot_pairwise_comparison_matrices(
+    scores: pd.Series,
+    *,
+    compared_index: str = "method",
+    title_prefix: Optional[str] = None,
+    save_dir: Optional[str] = None,
+    file_prefix: Optional[str] = None,
+    ttest_rel_alpha: float = 0.05,
+) -> tuple[plt.Figure, plt.Figure, pd.DataFrame, pd.DataFrame]:
+    """Plot old-ConSim-style pairwise win-rate and difference matrices.
+
+    ``scores`` must be a Series indexed by a MultiIndex containing
+    ``compared_index``. Every other index level defines a paired experimental
+    setting. The function intersects settings before each pairwise comparison,
+    so methods are compared only on common cells.
+    """
+    if not isinstance(scores.index, pd.MultiIndex):
+        raise TypeError("scores must use a MultiIndex.")
+    if compared_index not in scores.index.names:
+        raise ValueError(f"Missing index level {compared_index!r}.")
+
+    # Average exact duplicate rows first. This handles rescoring duplicates and
+    # repeated baseline rows without changing the experimental key names.
+    scores = scores.groupby(level=scores.index.names).mean().dropna()
+    contenders = list(scores.index.get_level_values(compared_index).unique())
+    if len(contenders) < 2:
+        raise ValueError("Need at least two contenders for a pairwise matrix.")
+
+    n_contenders = len(contenders)
+    percentage = pd.DataFrame(0.0, index=contenders, columns=contenders)
+    diff_mean = pd.DataFrame(0.0, index=contenders, columns=contenders)
+    diff_std = pd.DataFrame(0.0, index=contenders, columns=contenders)
+    pvalues = pd.DataFrame(1.0, index=contenders, columns=contenders)
+
+    for contender in contenders:
+        percentage.loc[contender, contender] = 50
+
+    for c1, c2 in combinations(contenders, 2):
+        sc1 = scores.xs(c1, level=compared_index).dropna()
+        sc2 = scores.xs(c2, level=compared_index).dropna()
+        common = sc1.index.intersection(sc2.index)
+        if len(common) == 0:
+            continue
+
+        sc1 = sc1.loc[common]
+        sc2 = sc2.loc[common]
+        wins = (sc1 > sc2).sum()
+        draws = (sc1 == sc2).sum()
+        defeats = (sc1 < sc2).sum()
+
+        percentage.loc[c1, c2] = round((wins + 0.5 * draws) / len(common) * 100)
+        percentage.loc[c2, c1] = round((defeats + 0.5 * draws) / len(common) * 100)
+        diff = sc1 - sc2
+        diff_mean.loc[c1, c2] = diff.mean()
+        diff_mean.loc[c2, c1] = -diff.mean()
+        diff_std.loc[c1, c2] = diff_std.loc[c2, c1] = diff.std()
+        if len(common) > 1:
+            pvalue = ttest_rel(sc1, sc2).pvalue
+            pvalues.loc[c1, c2] = pvalues.loc[c2, c1] = pvalue
+
+    ranking = n_contenders + 1 - (percentage >= 50).sum(axis="columns")
+    order = ranking.sort_values().index
+    percentage = percentage.reindex(index=order, columns=order)
+    diff_mean = diff_mean.reindex(index=order, columns=order)
+    diff_std = diff_std.reindex(index=order, columns=order)
+    pvalues = pvalues.reindex(index=order, columns=order)
+
+    percentage_with_rank = percentage.copy()
+    percentage_with_rank["rank"] = ranking.reindex(order)
+
+    fig_pct, ax_pct = plt.subplots(figsize=(10, 8))
+    pct_values = percentage_with_rank.to_numpy(dtype=float)
+    pct_image = ax_pct.imshow(pct_values, cmap="coolwarm", vmin=0, vmax=100)
+    for row in range(pct_values.shape[0]):
+        for col in range(pct_values.shape[1]):
+            text = f"{pct_values[row, col]:.0f}"
+            weight = "bold" if col == pct_values.shape[1] - 1 else "normal"
+            ax_pct.text(col, row, text, ha="center", va="center", weight=weight)
+    ax_pct.set_xticks(np.arange(percentage_with_rank.shape[1]))
+    ax_pct.set_yticks(np.arange(percentage_with_rank.shape[0]))
+    ax_pct.set_xticklabels(percentage_with_rank.columns, rotation=45, ha="right")
+    ax_pct.set_yticklabels(percentage_with_rank.index, rotation=0)
+    ax_pct.set_xlabel("Methods 2")
+    ax_pct.set_ylabel("Methods 1")
+    fig_pct.colorbar(pct_image, ax=ax_pct, label="Win rate of method 1 over method 2 (%)")
+    if title_prefix:
+        ax_pct.set_title(f"{title_prefix}: pairwise win rate")
+    fig_pct.tight_layout()
+
+    fig_diff, ax_diff = plt.subplots(figsize=(10, 8))
+    diff_values = diff_mean.to_numpy(dtype=float)
+    max_abs_diff = max(float(np.nanmax(np.abs(diff_values))), 1e-9)
+    diff_image = ax_diff.imshow(diff_values, cmap="coolwarm", vmin=-max_abs_diff, vmax=max_abs_diff)
+    for i, j in product(range(diff_mean.shape[0]), range(diff_mean.shape[1])):
+        annot = f"{diff_mean.iloc[i, j]:.2f}\n±{diff_std.iloc[i, j]:.2f}"
+        weight = "bold" if pvalues.iloc[i, j] < ttest_rel_alpha else "normal"
+        ax_diff.text(j, i, annot, ha="center", va="center", weight=weight, fontsize="small")
+    ax_diff.set_xticks(np.arange(diff_mean.shape[1]))
+    ax_diff.set_yticks(np.arange(diff_mean.shape[0]))
+    ax_diff.set_xticklabels(diff_mean.columns, rotation=45, ha="right")
+    ax_diff.set_yticklabels(diff_mean.index, rotation=0)
+    ax_diff.set_xlabel("Methods 2")
+    ax_diff.set_ylabel("Methods 1")
+    fig_diff.colorbar(diff_image, ax=ax_diff, label="Score difference mean")
+    if title_prefix:
+        ax_diff.set_title(f"{title_prefix}: pairwise score difference")
+    fig_diff.tight_layout()
+
+    if save_dir is not None and file_prefix is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fig_pct.savefig(os.path.join(save_dir, f"{file_prefix}_pairwise_percentage.pdf"))
+        fig_diff.savefig(os.path.join(save_dir, f"{file_prefix}_pairwise_difference.pdf"))
+
+    return fig_pct, fig_diff, percentage_with_rank, diff_mean
