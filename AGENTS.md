@@ -22,6 +22,7 @@ scripts/
   make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse); builds concept artifacts if missing
   make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
+  make_best_prompts.py  # Planned: subset best methods from data/prompts/ into data/best_prompts/ for multi-judge scoring
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
   state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
@@ -38,16 +39,19 @@ utils/                        # Shared library package
   simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
   rationales.py               # Rationale generation from local LLMs (Qwen)
   ratsim.py                   # Rationale-based prompt construction
-  plot.py                     # Plot helpers for score visualizations (new ConSim naming)
+  plot.py                     # Reusable plot helpers for paper figures (violins, bar plots, pairwise matrices)
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
 manifests/                    # Cluster command manifests; *_missing.tsv reruns only currently missing prompt groups
 notebooks/
-  4_compare_consim.ipynb      # Old/new ConSim score comparisons and diagnostics
-  5_compare_families.ipynb    # Concept/rationale/attribution prompt-type score comparisons
-generation_concept_tutorial.ipynb  # Interpreto concept tutorial
+  4_compare_consim.ipynb      # Planned: compare any two ConSim specs and any two interpretations; reproduce old-ConSim pairwise matrices
+  5_compare_families.ipynb    # Planned: concept/rationale/attribution comparisons and best-method selection for Stage 3
+  6_judge_consistency.ipynb   # Planned: multi-judge best-method comparisons and paired significance tests against baselines
+  old/                        # Archived copies of notebooks before the next-paper rewrite; keep for reference
+  generation_concept_tutorial.ipynb  # Interpreto concept tutorial
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
 data/                         # Gitignored artifacts: activation/prediction caches, prompts, scores
+  best_prompts/               # Planned: prompt JSONL subset for best methods only, preserving original prompt keys/schema
 ```
 
 ## Import Architecture
@@ -127,9 +131,9 @@ pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 
 ## Experiment Plan
 
-### Phase 1 — new ConSim vs old ConSim
+### Stage 1 — refind and improve old ConSim results
 
-Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consim` (all evaluation samples in one prompt) before launching broader explanation experiments.
+Goal: reproduce the original concept-based `old_consim` behavior, compare it against the current one-sample-per-prompt `new_consim`, test `simulator_consim`, and check whether `llm` concept interpretations change conclusions compared with `topk`.
 
 | Axis | Values |
 | --- | --- |
@@ -137,15 +141,24 @@ Goal: compare `new_consim` (one evaluation sample per prompt) against `old_consi
 | Methods | `seminmf`, `ica`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes` |
 | Interpretation | `topk` |
 | Seeds | `0-49` by default |
-| Samples per seed | `20` by default |
+| Samples per seed | `20` in the old/new/v2 comparison commands |
 
 Prompt generation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
-CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts.py concepts BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_consim_v2.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
+CUDA_VISIBLE_DEVICES=1 PATH=".venv/bin:$PATH" ./sequence.sh scripts/make_prompts_old_consim.py BIOS,RT,AG,IMDB seminmf,ica,pca,svd,vanilla_sae,neurons,classes --interpretation topk --nb-samples 20
 ```
+
+Next notebook work:
+
+- Update `notebooks/4_compare_consim.ipynb` with two specification pickers (`SPEC_A`, `SPEC_B`) over `old_consim`, `new_consim`, and `simulator_consim`.
+- Add two interpretation pickers (`INTERP_A`, `INTERP_B`) over `topk` and `llm`, reusing the same comparison plots.
+- Keep the existing old/new-style bar and violin comparisons, but make the chosen comparison explicit in plot titles and filenames.
+- Add an `old_consim`-only pairwise comparison matrix section, using the old-paper logic, to verify the reconstructed results.
+- Export Stage 1 figures to `LaTeX-Simulatability-Shortcut/plots/`.
+- Decide from this notebook whether `simulator_consim` is strong enough to justify regenerating all broader prompts and scores.
 
 Debug before larger runs:
 
@@ -159,9 +172,36 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts.py concepts RT neur
 CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/make_prompts_old_consim.py RT neurons --interpretation topk --seeds 0 --nb-samples 20
 ```
 
-### Phase 2 — broader explanation experiments
+### Stage 2 — extend to other explanation families
 
-After Phase 1 is debugged, extend to rationale, attribution, and concept simulatability grids across the intended datasets and LLM judges.
+Goal: compare concepts, rationales, and attributions under the harmonized one-sample-per-prompt setup with Qwen3.5-9B, and verify whether explanation methods differ from byte-identical no-explanation baselines.
+
+Next notebook work:
+
+- Use `notebooks/5_compare_families.ipynb` to compare non-anonymized concept, rationale, attribution, and baseline prompt types.
+- Select the best non-baseline method/configuration per explanation family, excluding the `classes` concept control.
+- Export the ranked bar plots and any necessary violin plots to `LaTeX-Simulatability-Shortcut/plots/`.
+- Insert these figures into `LaTeX-Simulatability-Shortcut/main.tex`, especially the section `LLM shortcut all explanations types`.
+
+### Stage 3 — additional LLM judges on best methods
+
+Goal: score only the best methods selected in Stage 2 with a larger set of LLM judges, then test whether those methods significantly differ from their matching baselines.
+
+Next workflow:
+
+- Record the best-method allow-list from `notebooks/5_compare_families.ipynb`.
+- Use the planned `scripts/make_best_prompts.py` to copy only selected methods and matching baselines from `data/prompts/` into `data/best_prompts/`.
+- Preserve original prompt keys and schemas in `data/best_prompts/`; do not rewrite prompts or invent new identifiers.
+- Score `data/best_prompts/*.jsonl` with the selected judges using `scripts/llm_scoring.py`.
+- Use `notebooks/6_judge_consistency.ipynb` to compare judges and run paired t-tests against baselines within each `(dataset, classes_subset)`.
+- Defer the exact additional judge list until compute capacity and Stage 2 outputs are known.
+
+Significance convention:
+
+- Pair rows by seed within each `(judge, dataset, classes_subset, method/configuration, prompt_type)` comparison.
+- Compare each method/configuration to its matching baseline (`B1` or `B2`; anonymized prompt types use anonymized baselines when included).
+- Use paired Student t-tests as the primary test, matching the old ConSim paper.
+- Apply a multiple-comparison correction across the tested `(dataset, classes_subset)` cells before reporting paper-level claims.
 
 ## CLI Arguments Reference
 
@@ -176,6 +216,10 @@ Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `p
 ### `make_prompts_consim_v2.py`
 
 Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for concept LLM interpretation, default llama3.2-3b), `--seeds`, `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`. Writes concept prompt groups to `data/prompts/{dataset}_concepts.jsonl` with `specification=simulator_consim`.
+
+### `make_best_prompts.py` planned
+
+Planned role: subset prompt JSONL rows from `data/prompts/` into `data/best_prompts/` using an explicit best-method allow-list exported from `notebooks/5_compare_families.ipynb`. It must preserve original prompt keys, row schema, prompt text, and expected answers. It should copy matching baselines alongside the selected best methods. Do not use it to rewrite prompt identifiers or alter scoring semantics.
 
 ### `llm_scoring.py`
 
@@ -206,6 +250,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Pre-computed local importances**: `all_local_importances.pt` is cached in each concept_dir (gradient of each concept for every test sample). Prompt scripts index into this tensor by sample index.
 - **Early-exit optimization**: `make_prompts.py` computes all expected output keys before importing torch/interpreto/transformers or loading data/models. If all entries already exist in the output JSONL, the script exits immediately (no model loading overhead).
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
+- **Best prompt JSONL** for Stage 3 will live under `data/best_prompts/` with the same filename pattern and row schema as `data/prompts/`. These files contain only selected best methods/configurations and matching baselines, but preserve the original prompt keys so score rows remain joinable with full-grid results.
 - **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. New-ConSim prompts are generated in chunks bounded by `--flush-every-prompts` individual evaluation prompts (default 100), then score rows and raw generations are flushed at prompt-group boundaries. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
 - **State coverage**: `scripts/state.py` reports valid prompt coverage as `valid% (+corrupted%)` when corrupted prompt-marker rows exist. Corrupted rows count as existing for prompt-generation rerun purposes, because prompt scripts skip those keys unless corrupted rows are explicitly dropped. Incomplete generation manifest rows ignore baseline prompt types (`B*`/`AB*`) so shared baselines do not make method-specific prompt-generation commands look missing.
@@ -213,6 +258,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
 - **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.
 - **All class subsets** for a dataset are processed in a single script invocation (defined in `DATASET_CLASSES_SUBSETS` in `utils/data.py`).
+- **Reusable plotting helpers** should live in `utils/plot.py`. The paper should only need three reusable plot families: violin distributions, ranked/difference bar plots, and pairwise comparison matrices. Keep notebook-specific filtering in notebooks, but move reusable figure construction to `utils/plot.py` when it is used by more than one notebook or needed for paper exports. `utils/old_plot.py` is a reference for old-ConSim pairwise matrix behavior; do not delete it while reconstructing old-paper results.
 
 ## Registries in `utils/data.py`
 
