@@ -453,7 +453,14 @@ def generate_prompts_for_subset(
                 if str_key in existing_keys:
                     continue
 
-                if explanation_family == "concepts" and concept_importances_corrupted:
+                if (
+                    explanation_family == "concepts"
+                    and concept_importances_corrupted
+                    and (
+                        setting.concepts_global_importances
+                        or setting.lp_concepts_local_contributions
+                    )
+                ):
                     if append_prompt_group_if_missing(
                         output_path,
                         {
