@@ -19,7 +19,7 @@ source setup_cluster.sh
 
 echo "hostname: $(hostname)"
 echo "job id: $SLURM_JOB_ID"
-echo "command: python scripts/llm_scoring.py $1 --batch-size 512"
+echo "command: python scripts/llm_scoring.py $1 --batch-size 16"
 
-python scripts/llm_scoring.py $1 --batch-size 512
+python scripts/llm_scoring.py $1 --batch-size 16
 

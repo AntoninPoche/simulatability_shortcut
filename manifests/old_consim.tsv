@@ -68,3 +68,17 @@ python scripts/make_prompts_old_consim.py E svd --interpretation llm
 python scripts/make_prompts_old_consim.py E vanilla_sae --interpretation llm
 python scripts/make_prompts_old_consim.py E neurons --interpretation llm
 python scripts/make_prompts_old_consim.py E classes --interpretation llm
+python scripts/make_prompts_old_consim.py GE seminmf --interpretation topk
+python scripts/make_prompts_old_consim.py GE ica --interpretation topk
+python scripts/make_prompts_old_consim.py GE pca --interpretation topk
+python scripts/make_prompts_old_consim.py GE svd --interpretation topk
+python scripts/make_prompts_old_consim.py GE vanilla_sae --interpretation topk
+python scripts/make_prompts_old_consim.py GE neurons --interpretation topk
+python scripts/make_prompts_old_consim.py GE classes --interpretation topk
+python scripts/make_prompts_old_consim.py GE seminmf --interpretation llm
+python scripts/make_prompts_old_consim.py GE ica --interpretation llm
+python scripts/make_prompts_old_consim.py GE pca --interpretation llm
+python scripts/make_prompts_old_consim.py GE svd --interpretation llm
+python scripts/make_prompts_old_consim.py GE vanilla_sae --interpretation llm
+python scripts/make_prompts_old_consim.py GE neurons --interpretation llm
+python scripts/make_prompts_old_consim.py GE classes --interpretation llm

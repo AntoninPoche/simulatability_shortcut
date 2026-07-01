@@ -83,7 +83,7 @@ def key_dict(raw_key: str, *, path: Path, line_no: int) -> dict[str, Any]:
             f"{path}:{line_no}: expected a {len(KEY_FIELDS)}-item prompt key tuple, "
             f"got {parsed!r}"
         )
-    return dict(zip(KEY_FIELDS, parsed, strict=True))
+    return dict(zip(KEY_FIELDS, parsed))
 
 
 def slugify(value: Any) -> str:

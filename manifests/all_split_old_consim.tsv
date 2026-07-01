@@ -1,0 +1,48 @@
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/AG_old_consim__method-baseline.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/E_old_consim__method-baseline.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-ClassesAs.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-ICA.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-NeuronsAs.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-PCA.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-SVD.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-SemiNMF.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-VanillaSAE.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/IMDB_old_consim__method-baseline.jsonl --batch-size 4
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/BIOS_old_consim__method-baseline.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_old_consim__method-baseline.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-ClassesAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-ICA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-NeuronsAs.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-PCA.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-SVD.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-SemiNMF.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-VanillaSAE.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/GE_old_consim__method-baseline.jsonl
