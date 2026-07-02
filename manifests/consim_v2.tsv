@@ -1,3 +1,17 @@
+python scripts/make_prompts_consim_v2.py E seminmf --interpretation topk
+python scripts/make_prompts_consim_v2.py E ica --interpretation topk
+python scripts/make_prompts_consim_v2.py E pca --interpretation topk
+python scripts/make_prompts_consim_v2.py E svd --interpretation topk
+python scripts/make_prompts_consim_v2.py E vanilla_sae --interpretation topk
+python scripts/make_prompts_consim_v2.py E neurons --interpretation topk
+python scripts/make_prompts_consim_v2.py E classes --interpretation topk
+python scripts/make_prompts_consim_v2.py GE seminmf --interpretation topk
+python scripts/make_prompts_consim_v2.py GE ica --interpretation topk
+python scripts/make_prompts_consim_v2.py GE pca --interpretation topk
+python scripts/make_prompts_consim_v2.py GE svd --interpretation topk
+python scripts/make_prompts_consim_v2.py GE vanilla_sae --interpretation topk
+python scripts/make_prompts_consim_v2.py GE neurons --interpretation topk
+python scripts/make_prompts_consim_v2.py GE classes --interpretation topk
 python scripts/make_prompts_consim_v2.py BIOS seminmf --interpretation topk
 python scripts/make_prompts_consim_v2.py BIOS ica --interpretation topk
 python scripts/make_prompts_consim_v2.py BIOS pca --interpretation topk
