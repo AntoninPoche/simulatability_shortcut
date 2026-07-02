@@ -1,0 +1,18 @@
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/AG_attributions.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/AG_concepts.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/AG_rationales.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/BIOS_attributions.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/BIOS_concepts.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/BIOS_rationales.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/E_attributions.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/E_concepts.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/E_rationales.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/GE_attributions.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/GE_concepts.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/GE_rationales.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/IMDB_attributions.jsonl --batch-size 4
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/IMDB_concepts.jsonl --batch-size 4
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/IMDB_rationales.jsonl --batch-size 4
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/RT_attributions.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/RT_concepts.jsonl
+python scripts/llm_scoring.py ${JUDGE_MODEL:?} data/best_prompts/RT_rationales.jsonl
