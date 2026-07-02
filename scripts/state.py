@@ -424,6 +424,19 @@ def load_score_keys(score_path: Path) -> tuple[set[tuple], int, int]:
     return unique, len(keys), len(keys) - len(unique)
 
 
+def load_valid_prompt_keys_from_file(prompt_path: Path) -> set[tuple]:
+    keys = set()
+    with prompt_path.open() as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            prompt_group = json.loads(line)
+            if prompt_group.get("corrupted"):
+                continue
+            keys.add(key_tuple_from_prompt_key(prompt_group["key"]))
+    return keys
+
+
 def score_path_for_model(model: str) -> Path:
     resolved = resolve_llm_model(model)
     return Path(f"data/consim_{resolved.replace('/', '_')}_v2.csv")
@@ -757,50 +770,47 @@ def summarize_coverage(
             if len(invalid) > limit:
                 print(f"... {len(invalid) - limit} more")
 
-    print("\nIncomplete Generation Manifest Rows")
-    print("-----------------------------------")
-    if not incomplete:
-        print("All generation manifest rows are complete.")
-    elif limit <= 0:
-        print(f"{len(incomplete)} incomplete row(s). Use --limit N to list commands.")
-    else:
-        rows = []
-        for command, valid, corrupted, missing, expected in incomplete[:limit]:
-            rows.append([command.label, valid, corrupted, missing, expected, command.command])
-        print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
-        if len(incomplete) > limit:
-            print(f"... {len(incomplete) - limit} more incomplete rows")
+    if limit > 0:
+        print("\nIncomplete Generation Manifest Rows")
+        print("-----------------------------------")
+        if not incomplete:
+            print("All generation manifest rows are complete.")
+        else:
+            rows = []
+            for command, valid, corrupted, missing, expected in incomplete[:limit]:
+                rows.append([command.label, valid, corrupted, missing, expected, command.command])
+            print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
+            if len(incomplete) > limit:
+                print(f"... {len(incomplete) - limit} more incomplete rows")
 
-    print("\nCorrupted Generation Manifest Rows")
-    print("----------------------------------")
-    if not corrupted_generation:
-        print("No generation manifest rows contain corrupted prompt markers.")
-    elif limit <= 0:
-        print(
-            f"{len(corrupted_generation)} row(s) contain corrupted prompt markers. "
-            "Use --limit N to list commands."
-        )
-    else:
-        rows = []
-        for command, valid, corrupted, missing, expected in corrupted_generation[:limit]:
-            rows.append([command.label, valid, corrupted, missing, expected, command.command])
-        print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
-        if len(corrupted_generation) > limit:
-            print(f"... {len(corrupted_generation) - limit} more corrupted rows")
+    if limit > 0:
+        print("\nCorrupted Generation Manifest Rows")
+        print("----------------------------------")
+        if not corrupted_generation:
+            print("No generation manifest rows contain corrupted prompt markers.")
+        else:
+            rows = []
+            for command, valid, corrupted, missing, expected in corrupted_generation[:limit]:
+                rows.append([command.label, valid, corrupted, missing, expected, command.command])
+            print_table(["row", "prompts", "corrupted", "missing", "expected", "command"], rows)
+            if len(corrupted_generation) > limit:
+                print(f"... {len(corrupted_generation) - limit} more corrupted rows")
 
     expected_all = set().union(*expected_by_pair.values()) if expected_by_pair else set()
     unexpected_prompt_keys = existing_prompt_keys - expected_all
-    if unexpected_prompt_keys:
+    if unexpected_prompt_keys and limit > 0:
         print("\nPrompt Keys Not Required By Generation Manifests")
         print("------------------------------------------------")
         by_triplet = Counter((key[0], key[8]) for key in unexpected_prompt_keys)
         rows = [[dataset, spec, count] for (dataset, spec), count in sorted(by_triplet.items())]
-        print_table(["dataset", "spec", "keys"], rows)
+        print_table(["dataset", "spec", "count"], rows)
 
-    if scoring_commands:
+    if scoring_commands and limit > 0:
         print("\nIncomplete Scoring Manifest Rows")
         print("--------------------------------")
         incomplete = []
+        missing_prompt_files = []
+        empty_prompt_files = []
         for command in scoring_commands:
             tokens = list(command.args["tokens"])
             pos = positional_tokens(tokens)
@@ -808,11 +818,13 @@ def summarize_coverage(
             if prompt_path is None:
                 continue
             prompt_path = Path(prompt_path)
-            matching = {
-                key
-                for key, record in prompt_records.items()
-                if Path(record["path"]) == prompt_path
-            }
+            if not prompt_path.exists():
+                missing_prompt_files.append(command)
+                continue
+            matching = load_valid_prompt_keys_from_file(prompt_path)
+            if not matching:
+                empty_prompt_files.append(command)
+                continue
             scored = len(matching & score_keys)
             if scored < len(matching):
                 incomplete.append((command, scored, len(matching)))
@@ -827,6 +839,17 @@ def summarize_coverage(
             print_table(["row", "scores", "prompts", "command"], rows)
             if len(incomplete) > limit:
                 print(f"... {len(incomplete) - limit} more incomplete rows")
+
+        if missing_prompt_files and limit > 0:
+            print("\nMissing Scoring Prompt Files")
+            print("----------------------------")
+            rows = [
+                [command.label, command.command]
+                for command in missing_prompt_files[:limit]
+            ]
+            print_table(["row", "command"], rows)
+            if len(missing_prompt_files) > limit:
+                print(f"... {len(missing_prompt_files) - limit} more missing files")
 
     return current_memory
 

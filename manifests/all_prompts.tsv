@@ -1,18 +1,23 @@
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/AG_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/AG_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/AG_old_consim.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/AG_rationales.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_old_consim.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/BIOS_rationales.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/E_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/E_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/E_old_consim.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/E_rationales.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_rationales.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_attributions.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_concepts.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/IMDB_rationales.jsonl --batch-size 4
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_attributions.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_concepts.jsonl
+python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_old_consim.jsonl
 python scripts/llm_scoring.py qwen3.5-9b data/prompts/RT_rationales.jsonl
