@@ -100,7 +100,7 @@ CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/llm_scoring.py llama3.2-3b
 Next steps:
 
 1. Export a best-method allow-list from `notebooks/5_compare_families.ipynb`.
-2. Use the planned `scripts/make_best_prompts.py` to copy only selected methods and matching baselines from `data/prompts/` into `data/best_prompts/`.
+2. Use `scripts/extract_best_prompts.py` to copy only selected methods and matching baselines from `data/prompts/` into `data/best_prompts/`.
 3. Preserve original prompt keys, schemas, prompt text, and expected answers in `data/best_prompts/`.
 4. Score `data/best_prompts/*.jsonl` with the selected additional judges using `scripts/llm_scoring.py`.
 5. Use `notebooks/6_judge_consistency.ipynb` to run paired Student t-tests per seed against matching baselines within each `(dataset, classes_subset)`.
@@ -162,7 +162,7 @@ Only launch the full grid after these checks pass or the failures are understood
 | `scripts/make_prompts.py` | Generate new ConSim prompts for concepts, rationales, or attributions |
 | `scripts/make_prompts_consim_v2.py` | Generate simulator-framed ConSim prompts for concept explanations |
 | `scripts/make_prompts_old_consim.py` | Generate old ConSim prompts for concept explanations |
-| `scripts/make_best_prompts.py` | Planned: copy only best-method prompts and matching baselines into `data/best_prompts/` |
+| `scripts/extract_best_prompts.py` | Copy only best-method prompts and matching baselines into `data/best_prompts/` |
 | `scripts/llm_scoring.py` | Score prompt JSONL files with a local Hugging Face LLM judge |
 | `sequence.sh` | Run a cartesian product over comma-separated CLI arguments |
 

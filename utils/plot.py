@@ -15,6 +15,7 @@ from typing import Mapping, Optional, Sequence
 import matplotlib as mpl
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
@@ -30,6 +31,7 @@ def plot_accuracies_violins(
     split_index: Optional[str] = None,
     split_order: Optional[Sequence[str]] = None,
     title: Optional[str] = None,
+    random_chance: Optional[float] = None,
     ax: Optional[plt.Axes] = None,
     save_dir: Optional[str] = None,
     file_name: Optional[str] = None,
@@ -244,6 +246,11 @@ def plot_accuracies_violins(
             xmax = bars_index[i] + bar_width * num_slots
             ax.plot([xmin, xmax], [baseline, baseline], color="black", linewidth=1)
 
+        if random_chance is not None:
+            ax.axhline(random_chance, color="dimgray", linestyle=":", linewidth=1.2, label="Random choice")
+            handles.append(Line2D([0], [0], color="dimgray", linestyle=":"))
+            labels.append("Random choice")
+
         ax.set_xlabel("Prompt types")
         ax.set_ylabel("Simulatability score")
         ax.set_xticks(bars_index + bar_width * (num_slots - 1) / 2)
@@ -280,7 +287,7 @@ def plot_accuracies_violins(
     # first split is drawn with a lighter fill + hatching, the second with a
     # solid darker fill. With other split counts we vary alpha smoothly.
     if n_splits == 1:
-        split_styles = {None: {"alpha": 0.65, "hatch": None}}
+        split_styles = {split_values[0]: {"alpha": 0.65, "hatch": None}}
     elif n_splits == 2:
         split_styles = {
             split_values[0]: {"alpha": 0.45, "hatch": "//"},
@@ -376,6 +383,11 @@ def plot_accuracies_violins(
                 linestyle=linestyle,
                 alpha=max(0.5, style["alpha"]),
             )
+
+    if random_chance is not None:
+        ax.axhline(random_chance, color="dimgray", linestyle=":", linewidth=1.2, label="Random choice")
+        method_legend_handles.append(Line2D([0], [0], color="dimgray", linestyle=":"))
+        method_legend_labels.append("Random choice")
 
     # Axes cosmetics.
     ax.set_xlabel("Prompt types")
@@ -516,6 +528,7 @@ def plot_ranked_score_bars(
     ylabel: str = "Score",
     title: Optional[str] = None,
     ylim: tuple[float, float] = (0, 1.05),
+    random_chance: Optional[float] = None,
     ax: Optional[plt.Axes] = None,
     save_dir: Optional[str] = None,
     file_name: Optional[str] = None,
@@ -555,6 +568,8 @@ def plot_ranked_score_bars(
         edgecolor="black",
         linewidth=0.6,
     )
+    if random_chance is not None:
+        ax.axhline(random_chance, color="dimgray", linestyle=":", linewidth=1.2, label="Random choice")
     ax.set_ylim(*ylim)
     ax.set_xticks(x)
     ax.set_xticklabels(sub[label_col], rotation=45, ha="right", fontsize=8)
@@ -569,8 +584,12 @@ def plot_ranked_score_bars(
             patches.Patch(facecolor=color_map[value], edgecolor="black", label=str(value))
             for value in legend_values
         ]
+        if random_chance is not None:
+            handles.append(Line2D([0], [0], color="dimgray", linestyle=":", label="Random choice"))
         if handles:
             ax.legend(handles=handles, loc="upper right", title=color_col)
+    elif random_chance is not None:
+        ax.legend(loc="upper right")
 
     fig.tight_layout()
     if save_dir is not None and file_name is not None:
@@ -588,6 +607,7 @@ def plot_pairwise_comparison_matrices(
     save_dir: Optional[str] = None,
     file_prefix: Optional[str] = None,
     ttest_rel_alpha: float = 0.05,
+    figsize: tuple[float, float] = (10, 8),
 ) -> tuple[plt.Figure, plt.Figure, pd.DataFrame, pd.DataFrame]:
     """Plot old-ConSim-style pairwise win-rate and difference matrices.
 
@@ -650,7 +670,7 @@ def plot_pairwise_comparison_matrices(
     percentage_with_rank = percentage.copy()
     percentage_with_rank["rank"] = ranking.reindex(order)
 
-    fig_pct, ax_pct = plt.subplots(figsize=(10, 8))
+    fig_pct, ax_pct = plt.subplots(figsize=figsize)
     pct_values = percentage_with_rank.to_numpy(dtype=float)
     pct_image = ax_pct.imshow(pct_values, cmap="coolwarm", vmin=0, vmax=100)
     for row in range(pct_values.shape[0]):
@@ -669,7 +689,7 @@ def plot_pairwise_comparison_matrices(
         ax_pct.set_title(f"{title_prefix}: pairwise win rate")
     fig_pct.tight_layout()
 
-    fig_diff, ax_diff = plt.subplots(figsize=(10, 8))
+    fig_diff, ax_diff = plt.subplots(figsize=figsize)
     diff_values = diff_mean.to_numpy(dtype=float)
     max_abs_diff = max(float(np.nanmax(np.abs(diff_values))), 1e-9)
     diff_image = ax_diff.imshow(diff_values, cmap="coolwarm", vmin=-max_abs_diff, vmax=max_abs_diff)
@@ -694,3 +714,60 @@ def plot_pairwise_comparison_matrices(
         fig_diff.savefig(os.path.join(save_dir, f"{file_prefix}_pairwise_difference.pdf"))
 
     return fig_pct, fig_diff, percentage_with_rank, diff_mean
+
+
+def plot_pairwise_win_matrix(
+    scores: pd.Series,
+    *,
+    compared_index: str = "method",
+    title_prefix: Optional[str] = None,
+    save_dir: Optional[str] = None,
+    file_prefix: Optional[str] = None,
+    ttest_rel_alpha: float = 0.05,
+    figsize: tuple[float, float] = (10, 8),
+) -> tuple[plt.Figure, pd.DataFrame]:
+    """Plot only the pairwise win-rate matrix."""
+    fig_pct, fig_diff, percentage, _ = plot_pairwise_comparison_matrices(
+        scores,
+        compared_index=compared_index,
+        title_prefix=title_prefix,
+        save_dir=None,
+        file_prefix=None,
+        ttest_rel_alpha=ttest_rel_alpha,
+        figsize=figsize,
+    )
+    plt.close(fig_diff)
+    if save_dir is not None and file_prefix is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fig_pct.savefig(os.path.join(save_dir, f"{file_prefix}_percentage.pdf"))
+    return fig_pct, percentage
+
+
+def plot_pairwise_difference_matrix(
+    scores: pd.Series,
+    *,
+    compared_index: str = "method",
+    title_prefix: Optional[str] = None,
+    save_dir: Optional[str] = None,
+    file_prefix: Optional[str] = None,
+    ttest_rel_alpha: float = 0.05,
+    figsize: tuple[float, float] = (10, 8),
+) -> tuple[plt.Figure, pd.DataFrame]:
+    """Plot only the pairwise score-difference matrix.
+
+    Significant paired t-tests are bolded by ``plot_pairwise_comparison_matrices``.
+    """
+    fig_pct, fig_diff, _, difference = plot_pairwise_comparison_matrices(
+        scores,
+        compared_index=compared_index,
+        title_prefix=title_prefix,
+        save_dir=None,
+        file_prefix=None,
+        ttest_rel_alpha=ttest_rel_alpha,
+        figsize=figsize,
+    )
+    plt.close(fig_pct)
+    if save_dir is not None and file_prefix is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fig_diff.savefig(os.path.join(save_dir, f"{file_prefix}_difference.pdf"))
+    return fig_diff, difference

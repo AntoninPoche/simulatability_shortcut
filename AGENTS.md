@@ -22,7 +22,7 @@ scripts/
   make_prompts.py             # Generate new-ConSim prompt JSONL (CLI, argparse); builds concept artifacts if missing
   make_prompts_consim_v2.py   # Generate simulator-framed ConSim concept prompt JSONL (CLI)
   make_prompts_old_consim.py  # Generate old-ConSim prompt JSONL for comparison (CLI)
-  make_best_prompts.py  # Planned: subset best methods from data/prompts/ into data/best_prompts/ for multi-judge scoring
+  extract_best_prompts.py  # Extract hard-coded best-method prompt subsets into data/best_prompts/
   split_prompt_file.py  # Split large prompt JSONL files into derived per-field files without touching originals
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
   state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
@@ -41,6 +41,7 @@ utils/                        # Shared library package
   simulatability.py           # Base AutomatedSimulatability class (local, not from interpreto)
   rationales.py               # Rationale generation from local LLMs (Qwen)
   ratsim.py                   # Rationale-based prompt construction
+  analysis.py                 # Shared notebook dataframe helpers for filtering, bucketed summaries, family inference, and best-config selection
   plot.py                     # Reusable plot helpers for paper figures (violins, bar plots, pairwise matrices)
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
@@ -111,6 +112,14 @@ python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl file
 python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl  # split by method into data/prompt_splits/
 python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl --by specification
 python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_concepts__method-seminmf.jsonl
+```
+
+**Extract best prompts** (creates derived JSONL files; originals are untouched):
+
+```bash
+python scripts/extract_best_prompts.py --dry-run
+python scripts/extract_best_prompts.py
+python scripts/llm_scoring.py qwen3.5-9b data/best_prompts/RT_concepts.jsonl
 ```
 
 **Drop rows from a score CSV** (to force re-scoring after regenerating prompts):
@@ -209,7 +218,7 @@ Goal: score only the best methods selected in Stage 2 with a larger set of LLM j
 Next workflow:
 
 - Record the best-method allow-list from `notebooks/5_compare_families.ipynb`.
-- Use the planned `scripts/make_best_prompts.py` to copy only selected methods and matching baselines from `data/prompts/` into `data/best_prompts/`.
+- Use `scripts/extract_best_prompts.py` to copy only selected methods and matching baselines from `data/prompts/` into `data/best_prompts/`.
 - Preserve original prompt keys and schemas in `data/best_prompts/`; do not rewrite prompts or invent new identifiers.
 - Score `data/best_prompts/*.jsonl` with the selected judges using `scripts/llm_scoring.py`.
 - Use `notebooks/6_judge_consistency.ipynb` to compare judges and run paired t-tests against baselines within each `(dataset, classes_subset)`.
@@ -236,9 +245,9 @@ Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `p
 
 Positional: `dataset`, `method`. Concept methods: `seminmf`, `ica`, `kmeans`, `pca`, `svd`, `vanilla_sae`, `neurons`, `classes`. Optional: `--nb-concepts-ratio`, `--interpretation`, `--llm-model` (for concept LLM interpretation, default llama3.2-3b), `--seeds`, `--nb-samples`, `--device`, `--batch-size`. For `classes`, `--interpretation` is ignored and prompt keys store `None`. Writes concept prompt groups to `data/prompts/{dataset}_concepts.jsonl` with `specification=simulator_consim`.
 
-### `make_best_prompts.py` planned
+### `extract_best_prompts.py`
 
-Planned role: subset prompt JSONL rows from `data/prompts/` into `data/best_prompts/` using an explicit best-method allow-list exported from `notebooks/5_compare_families.ipynb`. It must preserve original prompt keys, row schema, prompt text, and expected answers. It should copy matching baselines alongside the selected best methods. Do not use it to rewrite prompt identifiers or alter scoring semantics.
+Subsets prompt JSONL rows from `data/prompts/` into `data/best_prompts/` using the current hard-coded best-method allow-list: `lime` for attributions, `VanillaSAE` with `topk` for concepts, and `Qwen/Qwen3.5-2B` for rationales. It preserves original prompt keys, row schema, prompt text, and expected answers. It copies baselines alongside the selected best methods and excludes `old_consim` and `simulator_consim` rows. Do not use it to rewrite prompt identifiers or alter scoring semantics.
 
 ### `llm_scoring.py`
 
