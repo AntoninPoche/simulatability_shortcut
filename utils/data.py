@@ -139,9 +139,9 @@ DATASET_LABEL_COLUMNS = {
 DATASET_CLASSES_SUBSETS: dict[str, list[list[int]]] = {
     "google-research-datasets/go_emotions": [
         [2, 3, 27],  # anger, annoyance, neutral
-        [2, 3, 9, 10],  # anger, annoyance, disappointment, disapproval
+        # [2, 3, 9, 10],  # anger, annoyance, disappointment, disapproval
         [6, 7],  # confusion, curiosity
-        [0, 4, 5],  # admiration, approval, caring
+        # [0, 4, 5],  # admiration, approval, caring
     ],
     "dair-ai/emotion": [
         [0, 1, 2, 3, 4, 5],  # all classes

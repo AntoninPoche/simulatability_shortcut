@@ -26,7 +26,7 @@ scripts/
   split_prompt_file.py  # Split large prompt JSONL files into derived per-field files without touching originals
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
   state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
-  drop_method_rows.py   # Drop one method from prompt JSONL files and score CSVs (CLI, writes .bak)
+  drop_prompt_rows.py   # Drop prompt JSONL rows by prompt-key field filters (CLI, writes .bak)
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
   drop_corrupted_prompt_rows.py # Remove corrupted prompt JSONL marker rows (CLI, writes .bak)
 
@@ -102,8 +102,9 @@ python scripts/make_prompts_old_consim.py GE seminmf
 **Score prompts with local LLM**:
 
 ```bash
-python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
-python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
+.venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+.venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
+.venv/bin/python scripts/llm_scoring.py qwen3.5-9b --backend hf  # fallback without vLLM
 ```
 
 **Split large prompt files** (creates derived JSONL files; originals are untouched):
@@ -111,7 +112,8 @@ python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl file
 ```bash
 python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl  # split by method into data/prompt_splits/
 python scripts/split_prompt_file.py data/prompts/RT_concepts.jsonl --by specification
-python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_concepts__method-seminmf.jsonl
+.venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_concepts__method-seminmf.jsonl
+.venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompt_splits/RT_concepts__method-seminmf.jsonl data/prompt_splits/RT_concepts__method-ica.jsonl
 ```
 
 **Extract best prompts** (creates derived JSONL files; originals are untouched):
@@ -135,14 +137,15 @@ python scripts/drop_score_rows.py data/consim_Qwen_Qwen3.5-9B.csv dataset=RT spe
 
 Writes `<csv>.bak` first unless `--no-backup` is given.
 
-**Drop one method from all prompts and scores**:
+**Drop rows from prompt JSONL files**:
 
 ```bash
-python scripts/drop_method_rows.py batchtopk --dry-run
-python scripts/drop_method_rows.py batchtopk
+python scripts/drop_prompt_rows.py data/prompts/GE_concepts.jsonl classes_subset='[0, 4, 5]' --dry-run
+python scripts/drop_prompt_rows.py data/prompts data/prompt_splits dataset=GE classes_subset='[2, 3, 9, 10]'
+python scripts/drop_prompt_rows.py data/prompts method=SemiNMF specification=old_consim
 ```
 
-Scans `data/prompts/`, `data/prompt_splits/`, `data/best_prompts/`, and `data/consim*.csv`. Writes `<file>.bak` first unless `--no-backup` is given.
+Writes `<jsonl>.bak` first unless `--no-backup` is given. Use `drop_score_rows.py` separately to remove matching score rows.
 
 **Run full grids with sequence.sh** (cartesian product of comma-separated args):
 
@@ -251,7 +254,7 @@ Subsets prompt JSONL rows from `data/prompts/` into `data/best_prompts/` using t
 
 ### `llm_scoring.py`
 
-Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, all `data/prompts/*.jsonl` files are scored in one process with one judge-model load. Optional: `--thinking`, `--max-new-tokens`, `--batch-size`, `--flush-every-prompts` (new-ConSim flush chunk size, default 100), `--device`. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
+Positional: `judge_model`, optional one or more `prompt_file` paths. If no prompt files are provided, all `data/prompts/*.jsonl` files are scored in one process with one judge-model load. Optional: `--backend` (`vllm` when installed, otherwise `hf`; force `--backend hf` for the Hugging Face path), `--thinking`, `--max-new-tokens` (default 8 for new-ConSim), `--batch-size` (HF only; defaults to model-specific H100 recommendations when omitted), `--flush-every-prompts` (new-ConSim flush chunk size, default 100), `--device` (HF only). vLLM scoring should use `.venv-vllm/bin/python`; it enables prefix caching and ignores `--batch-size`. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default only sizes new-ConSim's short answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 
 ## Key Dependencies
 
@@ -279,7 +282,7 @@ Positional: `judge_model`, optional `prompt_file`. If `prompt_file` is omitted, 
 - **Early-exit optimization**: `make_prompts.py` computes all expected output keys before importing torch/interpreto/transformers or loading data/models. If all entries already exist in the output JSONL, the script exits immediately (no model loading overhead).
 - **Prompt JSONL** is split by dataset and explanation type: `data/prompts/{dataset_abbrev}_{family}.jsonl`. Old ConSim uses `data/prompts/{dataset_abbrev}_old_consim.jsonl`.
 - **Best prompt JSONL** for Stage 3 will live under `data/best_prompts/` with the same filename pattern and row schema as `data/prompts/`. These files contain only selected best methods/configurations and matching baselines, but preserve the original prompt keys so score rows remain joinable with full-grid results.
-- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without `prompt_file` loads all prompt JSONL files from `data/prompts/`, filters out keys already present in the score CSV, and scores the missing keys with one model load. New-ConSim prompts are generated in chunks bounded by `--flush-every-prompts` individual evaluation prompts (default 100), then score rows and raw generations are flushed at prompt-group boundaries. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default of 32 only sizes new-ConSim's one-token answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
+- **Scoring** auto-detects mode: if `len(user_prompts) == 1` with multiple expected answers → old ConSim parsing; otherwise → one-per-sample scoring. Calling `llm_scoring.py` without prompt files loads all prompt JSONL files from `data/prompts/`; passing multiple prompt files scores just those files with one model load. The script filters out keys already present in the score CSV, and scores the missing keys. New-ConSim prompts are generated in chunks bounded by `--flush-every-prompts` individual evaluation prompts (default 100), then score rows and raw generations are flushed at prompt-group boundaries. The default backend is vLLM when installed, otherwise HF; vLLM enables prefix caching and is intended to run from `.venv-vllm`. Old-ConSim prompts automatically receive a larger generation budget (the `--max-new-tokens` default only sizes new-ConSim's short answer); to re-score after fixing prompts or scoring code, use `scripts/drop_score_rows.py` to remove the stale rows first.
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
 - **State coverage**: `scripts/state.py` reports valid prompt coverage as `valid% (+corrupted%)` when corrupted prompt-marker rows exist. Corrupted rows count as existing for prompt-generation rerun purposes, because prompt scripts skip those keys unless corrupted rows are explicitly dropped. Incomplete generation manifest rows ignore baseline prompt types (`B*`/`AB*`) so shared baselines do not make method-specific prompt-generation commands look missing.
 - **Score v2 outputs**: `llm_scoring.py` writes new runs to `data/consim_{model}_v2.csv` and leaves v1 CSVs untouched. V2 columns are `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score,num_correct,num_valid,num_expected`. Invalid-format answers (`None` after parsing against allowed labels) are excluded from the denominator; `score = num_correct / num_valid` only when `num_valid >= ceil(0.7 * num_expected)`, otherwise `score` is `NaN`. Raw generations are appended per prompt group to `data/generations/{model}.jsonl` for offline parser/debug reruns. Old-ConSim token budgets add a 128-token slack above the per-line estimate.
