@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_1samp, ttest_rel
 
 from utils.analysis import filter_keep
 
@@ -444,6 +444,7 @@ def plot_difference_bars(
     title: str | None = None,
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
+    pvalue_alpha: float = 0.05,
 ) -> tuple[plt.Figure, np.ndarray]:
     """Plot bucketed score differences as simple signed bar plots.
 
@@ -451,8 +452,14 @@ def plot_difference_bars(
     helper intentionally does not compute statistics: notebooks keep filtering
     and aggregation explicit, while this function centralizes the visual style.
     """
-    means = differences.groupby(comparison_col).mean().sort_values(ascending=False)
-    stds = differences.groupby(comparison_col).std().reindex(means.index)  # ensure stds aligns with means
+    grouped = differences.groupby(comparison_col)
+    means = grouped.mean().sort_values(ascending=False)
+    stds = grouped.std().reindex(means.index)  # ensure stds aligns with means
+
+    pvalues = pd.Series(np.nan, index=means.index, dtype=float)
+    for key in means.index:
+        values = grouped.get_group(key).dropna()
+        pvalues.loc[key] = ttest_1samp(values, popmean=0).pvalue
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(max(7, 0.7 * len(means) + 3), 4))
@@ -473,13 +480,30 @@ def plot_difference_bars(
     )
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xticks(x)
-    ax.set_xticklabels(means.index, rotation=45, ha="right", fontsize=8)
+    xticklabels = [
+        f"{key}\n{_format_pvalue_tick(pvalues.loc[key], alpha=pvalue_alpha)}"
+        for key in means.index
+    ]
+    ax.set_xticklabels(xticklabels, fontsize=8)
     ax.set_ylabel(ylabel)
     if title is not None:
         ax.set_title(title)
     ax.grid(axis="y", linestyle=":", alpha=0.5)
 
     return fig, ax
+
+
+def _format_pvalue_tick(pvalue: float, *, alpha: float) -> str:
+    if pd.isna(pvalue):
+        text = "p=n/a"
+    elif pvalue < 0.001:
+        text = "p<0.001"
+    else:
+        text = f"p={pvalue:.3f}"
+
+    if pd.notna(pvalue) and pvalue < alpha:
+        return r"$\bf{" + text.replace("<", r"<") + "}$"
+    return text
 
 def panel_difference_bars(
     differences: pd.Series,
@@ -490,6 +514,7 @@ def panel_difference_bars(
     title: str | None = None,
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
+    pvalue_alpha: float = 0.05,
 ) -> tuple[plt.Figure, np.ndarray]:
     """Plot bucketed score differences as simple signed bar plots.
 
@@ -517,7 +542,8 @@ def panel_difference_bars(
             ylabel=ylabel,
             title=f"{panel_col}={panel_value}",
             positive_color=positive_color,
-            negative_color=negative_color
+            negative_color=negative_color,
+            pvalue_alpha=pvalue_alpha,
         )
 
     # if title is not None:
