@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
 
+from utils.analysis import filter_keep
+
 
 def plot_accuracies_violins(
     accuracies: pd.Series,
@@ -433,179 +435,103 @@ def plot_accuracies_violins(
 
     return ax
 
-
-# Default baseline mapping for the current prompt-type naming convention.
-# C1 / AC1 are paired with B1 / AB1; C2, C3, AC2, AC3 with B2 / AB2.
-DEFAULT_BASELINE_FOR: dict[str, str] = {
-    "C1": "B1",
-    "C2": "B2",
-    "C3": "B2",
-    "AC1": "AB1",
-    "AC2": "AB2",
-    "AC3": "AB2",
-}
-
-
 def plot_difference_bars(
-    stats: pd.DataFrame,
+    differences: pd.Series,
     *,
-    value_col: str = "mean_diff",
-    err_col: str = "std_diff",
-    item_col: str = "prompt_type",
-    panel_col: str = "classes_subset",
+    ax: plt.Axes | None = None,
+    comparison_col: str = "prompt_type",
     ylabel: str = "Score difference",
-    title: Optional[str] = None,
+    title: str | None = None,
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
-    save_dir: Optional[str] = None,
-    file_name: Optional[str] = None,
 ) -> tuple[plt.Figure, np.ndarray]:
     """Plot bucketed score differences as simple signed bar plots.
 
-    ``stats`` is expected to already contain one row per displayed bar. This
+    ``differences`` is expected to already contain one row per displayed bar. This
     helper intentionally does not compute statistics: notebooks keep filtering
     and aggregation explicit, while this function centralizes the visual style.
     """
-    if stats.empty:
-        raise ValueError("Cannot plot an empty stats dataframe.")
-
-    panels = list(stats[panel_col].drop_duplicates())
-    fig, axes = plt.subplots(
-        len(panels),
-        1,
-        figsize=(max(7, 0.7 * stats[item_col].nunique() + 3), 4 * len(panels)),
-        sharey=True,
-        squeeze=False,
-    )
-
-    for ax, panel_value in zip(axes[:, 0], panels):
-        sub = (
-            stats[stats[panel_col] == panel_value]
-            .sort_values(value_col, ascending=False)
-            .reset_index(drop=True)
-        )
-        x = np.arange(len(sub))
-        colors = [positive_color if value >= 0 else negative_color for value in sub[value_col]]
-
-        ax.bar(
-            x,
-            sub[value_col],
-            yerr=sub[err_col] if err_col in sub else None,
-            capsize=4,
-            color=colors,
-            edgecolor="black",
-            linewidth=0.6,
-        )
-        ax.axhline(0, color="black", linewidth=0.8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(sub[item_col], rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel(ylabel)
-        ax.set_title(f"{panel_col}={panel_value}")
-        ax.grid(axis="y", linestyle=":", alpha=0.5)
-
-    axes[-1, 0].set_xlabel(item_col)
-    if title is not None:
-        fig.suptitle(title, fontsize=10)
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
-    else:
-        fig.tight_layout()
-
-    if save_dir is not None and file_name is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        fig.savefig(os.path.join(save_dir, file_name))
-
-    return fig, axes
-
-
-def plot_ranked_score_bars(
-    stats: pd.DataFrame,
-    *,
-    label_col: str = "label",
-    value_col: str = "mean_score",
-    err_col: str = "std_score",
-    color_col: Optional[str] = None,
-    color_map: Optional[Mapping[str, str]] = None,
-    ylabel: str = "Score",
-    title: Optional[str] = None,
-    ylim: tuple[float, float] = (0, 1.05),
-    random_chance: Optional[float] = None,
-    ax: Optional[plt.Axes] = None,
-    save_dir: Optional[str] = None,
-    file_name: Optional[str] = None,
-) -> plt.Axes:
-    """Plot one ranked bar panel with optional colors by category.
-
-    ``stats`` should contain one row per bar. The function sorts bars by
-    ``value_col`` descending, because most paper panels rank methods from best
-    to worst. It does not compute any aggregation.
-    """
-    if stats.empty:
-        raise ValueError("Cannot plot an empty stats dataframe.")
-
-    sub = stats.sort_values(value_col, ascending=False).reset_index(drop=True)
-    x = np.arange(len(sub))
-
-    if color_col is not None:
-        if color_map is None:
-            tab10 = mpl.colormaps["tab10"].colors
-            values = list(sub[color_col].drop_duplicates())
-            color_map = {value: tab10[i % len(tab10)] for i, value in enumerate(values)}
-        colors = [color_map.get(value, "#999999") for value in sub[color_col]]
-    else:
-        colors = "#4c72b0"
+    means = differences.groupby(comparison_col).mean().sort_values(ascending=False)
+    stds = differences.groupby(comparison_col).std().reindex(means.index)  # ensure stds aligns with means
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(max(8, 0.75 * len(sub) + 2), 5))
+        fig, ax = plt.subplots(figsize=(max(7, 0.7 * len(means) + 3), 4))
     else:
         fig = ax.figure
 
+    x = np.arange(len(means))
+    colors = [positive_color if value >= 0 else negative_color for value in means]
+
     ax.bar(
         x,
-        sub[value_col],
-        yerr=sub[err_col] if err_col in sub else None,
+        means,
+        yerr=stds,
         capsize=4,
         color=colors,
         edgecolor="black",
         linewidth=0.6,
     )
-    if random_chance is not None:
-        ax.axhline(random_chance, color="dimgray", linestyle=":", linewidth=1.2, label="Random choice")
-    ax.set_ylim(*ylim)
+    ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xticks(x)
-    ax.set_xticklabels(sub[label_col], rotation=45, ha="right", fontsize=8)
+    ax.set_xticklabels(means.index, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel(ylabel)
-    ax.grid(axis="y", linestyle=":", alpha=0.5)
     if title is not None:
         ax.set_title(title)
+    ax.grid(axis="y", linestyle=":", alpha=0.5)
 
-    if color_col is not None and color_map is not None:
-        legend_values = [value for value in color_map if value in set(sub[color_col])]
-        handles = [
-            patches.Patch(facecolor=color_map[value], edgecolor="black", label=str(value))
-            for value in legend_values
-        ]
-        if random_chance is not None:
-            handles.append(Line2D([0], [0], color="dimgray", linestyle=":", label="Random choice"))
-        if handles:
-            ax.legend(handles=handles, loc="upper right", title=color_col)
-    elif random_chance is not None:
-        ax.legend(loc="upper right")
+    return fig, ax
 
+def panel_difference_bars(
+    differences: pd.Series,
+    *,
+    panel_col: str | None = None,
+    comparison_col: str = "prompt_type",
+    ylabel: str = "Score difference",
+    title: str | None = None,
+    positive_color: str = "#4c72b0",
+    negative_color: str = "#c44e52",
+) -> tuple[plt.Figure, np.ndarray]:
+    """Plot bucketed score differences as simple signed bar plots.
+
+    ``differences`` is expected to already contain one row per displayed bar. This
+    helper intentionally does not compute statistics: notebooks keep filtering
+    and aggregation explicit, while this function centralizes the visual style.
+    """
+    if differences.empty:
+        raise ValueError("Cannot plot an empty differences dataframe.")
+
+    panels = differences.index.get_level_values(panel_col).unique()
+    fig, axes = plt.subplots(
+        len(panels),
+        1,
+        figsize=(max(7, 0.7 * differences.index.get_level_values(comparison_col).nunique() + 3), 4 * len(panels)),
+        sharey=True,
+        squeeze=False,
+    )
+
+    for ax, panel_value in zip(axes[:, 0], panels):
+        plot_difference_bars(
+            filter_keep(differences, keep={panel_col: panel_value}),
+            ax=ax,
+            comparison_col=comparison_col,
+            ylabel=ylabel,
+            title=f"{panel_col}={panel_value}",
+            positive_color=positive_color,
+            negative_color=negative_color
+        )
+
+    # if title is not None:
+    #     fig.suptitle(title, fontsize=10)
+    #     fig.tight_layout(rect=[0, 0, 1, 0.93])
     fig.tight_layout()
-    if save_dir is not None and file_name is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        fig.savefig(os.path.join(save_dir, file_name))
 
-    return ax
+    return fig, axes
 
 
 def plot_pairwise_comparison_matrices(
     scores: pd.Series,
     *,
     compared_index: str = "method",
-    title_prefix: Optional[str] = None,
-    save_dir: Optional[str] = None,
-    file_prefix: Optional[str] = None,
     ttest_rel_alpha: float = 0.05,
     figsize: tuple[float, float] = (10, 8),
 ) -> tuple[plt.Figure, plt.Figure, pd.DataFrame, pd.DataFrame]:
@@ -685,8 +611,6 @@ def plot_pairwise_comparison_matrices(
     ax_pct.set_xlabel("Methods 2")
     ax_pct.set_ylabel("Methods 1")
     fig_pct.colorbar(pct_image, ax=ax_pct, label="Win rate of method 1 over method 2 (%)")
-    if title_prefix:
-        ax_pct.set_title(f"{title_prefix}: pairwise win rate")
     fig_pct.tight_layout()
 
     fig_diff, ax_diff = plt.subplots(figsize=figsize)
@@ -704,70 +628,6 @@ def plot_pairwise_comparison_matrices(
     ax_diff.set_xlabel("Methods 2")
     ax_diff.set_ylabel("Methods 1")
     fig_diff.colorbar(diff_image, ax=ax_diff, label="Score difference mean")
-    if title_prefix:
-        ax_diff.set_title(f"{title_prefix}: pairwise score difference")
     fig_diff.tight_layout()
 
-    if save_dir is not None and file_prefix is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        fig_pct.savefig(os.path.join(save_dir, f"{file_prefix}_pairwise_percentage.pdf"))
-        fig_diff.savefig(os.path.join(save_dir, f"{file_prefix}_pairwise_difference.pdf"))
-
     return fig_pct, fig_diff, percentage_with_rank, diff_mean
-
-
-def plot_pairwise_win_matrix(
-    scores: pd.Series,
-    *,
-    compared_index: str = "method",
-    title_prefix: Optional[str] = None,
-    save_dir: Optional[str] = None,
-    file_prefix: Optional[str] = None,
-    ttest_rel_alpha: float = 0.05,
-    figsize: tuple[float, float] = (10, 8),
-) -> tuple[plt.Figure, pd.DataFrame]:
-    """Plot only the pairwise win-rate matrix."""
-    fig_pct, fig_diff, percentage, _ = plot_pairwise_comparison_matrices(
-        scores,
-        compared_index=compared_index,
-        title_prefix=title_prefix,
-        save_dir=None,
-        file_prefix=None,
-        ttest_rel_alpha=ttest_rel_alpha,
-        figsize=figsize,
-    )
-    plt.close(fig_diff)
-    if save_dir is not None and file_prefix is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        fig_pct.savefig(os.path.join(save_dir, f"{file_prefix}_percentage.pdf"))
-    return fig_pct, percentage
-
-
-def plot_pairwise_difference_matrix(
-    scores: pd.Series,
-    *,
-    compared_index: str = "method",
-    title_prefix: Optional[str] = None,
-    save_dir: Optional[str] = None,
-    file_prefix: Optional[str] = None,
-    ttest_rel_alpha: float = 0.05,
-    figsize: tuple[float, float] = (10, 8),
-) -> tuple[plt.Figure, pd.DataFrame]:
-    """Plot only the pairwise score-difference matrix.
-
-    Significant paired t-tests are bolded by ``plot_pairwise_comparison_matrices``.
-    """
-    fig_pct, fig_diff, _, difference = plot_pairwise_comparison_matrices(
-        scores,
-        compared_index=compared_index,
-        title_prefix=title_prefix,
-        save_dir=None,
-        file_prefix=None,
-        ttest_rel_alpha=ttest_rel_alpha,
-        figsize=figsize,
-    )
-    plt.close(fig_pct)
-    if save_dir is not None and file_prefix is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        fig_diff.savefig(os.path.join(save_dir, f"{file_prefix}_difference.pdf"))
-    return fig_diff, difference
