@@ -1,4 +1,4 @@
-"""Score ConSim prompt groups with a local Hugging Face LLM.
+"""Score ConSim prompt groups with a local LLM.
 
 Reads prompt JSONL, skips already-scored keys, runs inference, and appends
 score rows to the output CSV.
@@ -13,6 +13,7 @@ Usage examples::
 
     python scripts/llm_scoring.py Qwen/Qwen3-0.6B
     python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+    python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl data/prompts/RT_concepts.jsonl
     python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_old_consim.jsonl
 """
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import importlib.util
 import json
 import math
 import re
@@ -45,9 +47,27 @@ CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
 BARE_INT_RE = re.compile(r"^\d+$")
 SCI_TECH_RE = re.compile(r"\bscience\s+(?:and|&)\s+technology\b", re.IGNORECASE)
 CLASSES_LINE_RE = re.compile(r"^The classes are:\s*\[(.*)\]\s*$")
+DEFAULT_HF_BATCH_SIZES = {
+    "Qwen/Qwen3.5-2B": 256,
+    "meta-llama/Llama-3.2-3B-Instruct": 192,
+    "meta-llama/Llama-3.1-8B-Instruct": 96,
+    "Qwen/Qwen3.5-9B": 96,
+    "microsoft/phi-4": 64,
+    "mistralai/Ministral-3-14B-Instruct-2512": 64,
+    "openai/gpt-oss-20b": 32,
+    "Qwen/Qwen3.6-27B": 24,
+    "google/gemma-4-31B-it": 16,
+}
+FALLBACK_HF_BATCH_SIZE = 64
+
+
+def default_hf_batch_size(judge_model: str) -> int:
+    """Recommended HF batch size for one H100, keyed by resolved model name."""
+    return DEFAULT_HF_BATCH_SIZES.get(judge_model, FALLBACK_HF_BATCH_SIZE)
 
 
 def parse_args() -> argparse.Namespace:
+    default_backend = "vllm" if importlib.util.find_spec("vllm") is not None else "hf"
     parser = argparse.ArgumentParser(
         description="Score ConSim prompt groups with a local LLM.",
     )
@@ -58,9 +78,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "prompt_file",
         type=Path,
-        nargs="?",
+        nargs="*",
         default=None,
-        help="Path to the prompt JSONL file to score. If omitted, score all data/prompts/*.jsonl files.",
+        help=(
+            "Path(s) to prompt JSONL file(s) to score. If omitted, score all "
+            "data/prompts/*.jsonl files."
+        ),
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("hf", "vllm"),
+        default=default_backend,
+        help=(
+            "Generation backend. Defaults to vllm when importable, otherwise hf "
+            f"(current default: {default_backend})."
+        ),
     )
     parser.add_argument(
         "--thinking",
@@ -71,14 +103,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=32,
-        help="Max tokens to generate per prompt (default: 32).",
+        default=8,
+        help=(
+            "Max tokens to generate per new-ConSim prompt (default: 8). "
+            "Old-ConSim prompts auto-scale this upward as needed."
+        ),
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=16,
-        help="Batch size for generation (default: 16).",
+        default=None,
+        help=(
+            "Batch size for HF generation; ignored by vLLM. If omitted, use a "
+            "model-specific H100 default."
+        ),
     )
     parser.add_argument(
         "--flush-every-prompts",
@@ -98,6 +136,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.flush_every_prompts < 1:
         parser.error("--flush-every-prompts must be >= 1")
+    if args.backend == "vllm" and importlib.util.find_spec("vllm") is None:
+        parser.error("--backend vllm requested, but the vllm package is not installed")
     return args
 
 
@@ -138,13 +178,14 @@ def load_treated_keys(score_path: Path) -> set[str]:
     )
 
 
-def resolve_prompt_paths(prompt_file: Path | None) -> list[Path]:
+def resolve_prompt_paths(prompt_file: list[Path] | None) -> list[Path]:
     """Return the requested prompt file(s), defaulting to all prompt JSONL files."""
-    if prompt_file is not None:
-        if not prompt_file.exists():
-            print(f"Prompt file not found: {prompt_file}")
-            sys.exit(1)
-        return [prompt_file]
+    if prompt_file:
+        for path in prompt_file:
+            if not path.exists():
+                print(f"Prompt file not found: {path}")
+                sys.exit(1)
+        return prompt_file
 
     prompt_paths = sorted(PROMPT_DIR.glob("*.jsonl"))
     if not prompt_paths:
@@ -185,6 +226,7 @@ def generate_answers(
     thinking: bool,
     max_new_tokens: int,
     batch_size: int,
+    backend: str = "hf",
 ) -> list[str]:
     """Run batched forward passes for a prompt group."""
     full_prompts = [
@@ -193,6 +235,7 @@ def generate_answers(
     return generate_completions(
         model=model,
         tokenizer=tokenizer,
+        backend=backend,
         full_prompts=full_prompts,
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
@@ -202,12 +245,39 @@ def generate_answers(
 def generate_completions(
     model,
     tokenizer,
+    backend: str,
     full_prompts: list[str],
     *,
     max_new_tokens: int,
     batch_size: int,
 ) -> list[str]:
-    """Run batched forward passes for already-rendered prompts."""
+    """Run batched generation for already-rendered prompts."""
+    if backend == "vllm":
+        return generate_completions_vllm(
+            model,
+            full_prompts,
+            max_new_tokens=max_new_tokens,
+        )
+    if backend == "hf":
+        return generate_completions_hf(
+            model,
+            tokenizer,
+            full_prompts,
+            max_new_tokens=max_new_tokens,
+            batch_size=batch_size,
+        )
+    raise ValueError(f"Unsupported backend: {backend}")
+
+
+def generate_completions_hf(
+    model,
+    tokenizer,
+    full_prompts: list[str],
+    *,
+    max_new_tokens: int,
+    batch_size: int,
+) -> list[str]:
+    """Run HF batched forward passes for already-rendered prompts."""
     generated_texts: list[str] = []
     model_device = next(model.parameters()).device
     batch_starts = range(0, len(full_prompts), batch_size)
@@ -232,6 +302,39 @@ def generate_completions(
         )
 
     return generated_texts
+
+
+def load_vllm_engine(judge_model: str):
+    """Load a vLLM engine with prefix caching enabled."""
+    from vllm import LLM
+
+    return LLM(
+        model=judge_model,
+        dtype="auto",
+        enable_prefix_caching=True,
+        gpu_memory_utilization=0.9,
+    )
+
+
+def generate_completions_vllm(
+    engine,
+    full_prompts: list[str],
+    *,
+    max_new_tokens: int,
+) -> list[str]:
+    """Run vLLM generation for already-rendered prompts."""
+    from vllm import SamplingParams
+
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        max_tokens=max_new_tokens,
+    )
+    outputs = engine.generate(
+        full_prompts,
+        sampling_params,
+        use_tqdm=False,
+    )
+    return [output.outputs[0].text.strip() for output in outputs]
 
 
 def is_old_consim_prompt_group(prompt_group: dict) -> bool:
@@ -570,6 +673,8 @@ def main() -> None:
 
     # Resolve short model name.
     args.judge_model = resolve_llm_model(args.judge_model)
+    if args.batch_size is None:
+        args.batch_size = default_hf_batch_size(args.judge_model)
 
     prompt_paths = resolve_prompt_paths(args.prompt_file)
 
@@ -599,7 +704,9 @@ def main() -> None:
     print(f"Prompt files: {len(prompt_paths)}")
     for prompt_path in prompt_paths:
         print(f"  - {prompt_path}")
+    print(f"Backend:      {args.backend}")
     print(f"Thinking:     {args.thinking}")
+    print(f"Batch size:   {args.batch_size} ({'ignored by vLLM' if args.backend == 'vllm' else 'HF generation'})")
     print(f"Score file:   {score_path}")
     generation_log_path = get_generation_log_path(args.judge_model, args.thinking)
     generation_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -607,24 +714,27 @@ def main() -> None:
     print(f"To score:     {len(missing_keys)} / {len(requested_keys)} keys")
     print()
 
-    # Load model.
+    # Load tokenizer and selected generation backend.
     tokenizer = AutoTokenizer.from_pretrained(args.judge_model)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.judge_model,
-        torch_dtype="auto",
-        device_map=args.device,
-    )
-    if model.config.pad_token_id is None and tokenizer.pad_token_id is not None:
-        model.config.pad_token_id = tokenizer.pad_token_id
-    if (
-        model.generation_config.pad_token_id is None
-        and tokenizer.pad_token_id is not None
-    ):
-        model.generation_config.pad_token_id = tokenizer.pad_token_id
+    if args.backend == "vllm":
+        model = load_vllm_engine(args.judge_model)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.judge_model,
+            torch_dtype="auto",
+            device_map=args.device,
+        )
+        if model.config.pad_token_id is None and tokenizer.pad_token_id is not None:
+            model.config.pad_token_id = tokenizer.pad_token_id
+        if (
+            model.generation_config.pad_token_id is None
+            and tokenizer.pad_token_id is not None
+        ):
+            model.generation_config.pad_token_id = tokenizer.pad_token_id
 
     # Score missing keys.
     with open(score_path, "a", newline="") as handle, open(
@@ -673,6 +783,7 @@ def main() -> None:
                     answers = generate_completions(
                         model=model,
                         tokenizer=tokenizer,
+                        backend=args.backend,
                         full_prompts=full_prompts,
                         max_new_tokens=args.max_new_tokens,
                         batch_size=args.batch_size,
@@ -765,6 +876,7 @@ def main() -> None:
                         thinking=args.thinking,
                         max_new_tokens=max_new_tokens,
                         batch_size=args.batch_size,
+                        backend=args.backend,
                     )
 
                     write_generation_log(
