@@ -47,27 +47,49 @@ CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
 BARE_INT_RE = re.compile(r"^\d+$")
 SCI_TECH_RE = re.compile(r"\bscience\s+(?:and|&)\s+technology\b", re.IGNORECASE)
 CLASSES_LINE_RE = re.compile(r"^The classes are:\s*\[(.*)\]\s*$")
-DEFAULT_HF_BATCH_SIZES = {
-    "Qwen/Qwen3.5-2B": 256,
-    "meta-llama/Llama-3.2-3B-Instruct": 192,
-    "meta-llama/Llama-3.1-8B-Instruct": 96,
-    "Qwen/Qwen3.5-9B": 96,
-    "microsoft/phi-4": 64,
-    "mistralai/Ministral-3-14B-Instruct-2512": 64,
-    "openai/gpt-oss-20b": 32,
-    "Qwen/Qwen3.6-27B": 24,
-    "google/gemma-4-31B-it": 16,
+DEFAULT_BATCH_SIZES = {
+    "hf": {
+        "Qwen/Qwen3.5-2B": 64,
+        "meta-llama/Llama-3.2-3B-Instruct": 64,
+        "meta-llama/Llama-3.1-8B-Instruct": 32,
+        "Qwen/Qwen3.5-9B": 32,
+        "microsoft/phi-4": 16,
+        "mistralai/Ministral-3-14B-Instruct-2512": 16,
+        "openai/gpt-oss-20b": 1,
+        "Qwen/Qwen3.6-27B": 8,
+        "google/gemma-4-31B-it": 4,
+    },
+    "vllm": {
+        "Qwen/Qwen3.5-2B": 64,
+        "meta-llama/Llama-3.2-3B-Instruct": 64,
+        "meta-llama/Llama-3.1-8B-Instruct": 32,
+        "Qwen/Qwen3.5-9B": 4,
+        "microsoft/phi-4": 16,
+        "mistralai/Ministral-3-14B-Instruct-2512": 16,
+        "openai/gpt-oss-20b": 8,
+        "Qwen/Qwen3.6-27B": 8,
+        "google/gemma-4-31B-it": 4,
+    },
 }
-FALLBACK_HF_BATCH_SIZE = 64
+FALLBACK_BATCH_SIZES = {
+    "hf": 64,
+    "vllm": 16,
+}
+DEFAULT_VLLM_MAX_MODEL_LEN = 2048
+DEFAULT_VLLM_MAX_NUM_BATCHED_TOKENS = 2048
+DEFAULT_VLLM_GPU_MEMORY_UTILIZATION = 0.60
 
 
-def default_hf_batch_size(judge_model: str) -> int:
-    """Recommended HF batch size for one H100, keyed by resolved model name."""
-    return DEFAULT_HF_BATCH_SIZES.get(judge_model, FALLBACK_HF_BATCH_SIZE)
+def default_batch_size(judge_model: str, backend: str) -> int:
+    """Recommended prompt batch size for one H100."""
+    return DEFAULT_BATCH_SIZES[backend].get(
+        judge_model,
+        FALLBACK_BATCH_SIZES[backend],
+    )
 
 
 def parse_args() -> argparse.Namespace:
-    default_backend = "vllm" if importlib.util.find_spec("vllm") is not None else "hf"
+    default_backend = "hf"  # "vllm" if importlib.util.find_spec("vllm") is not None else "hf"
     parser = argparse.ArgumentParser(
         description="Score ConSim prompt groups with a local LLM.",
     )
@@ -103,9 +125,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=8,
+        default=5,
         help=(
-            "Max tokens to generate per new-ConSim prompt (default: 8). "
+            "Max tokens to generate per new-ConSim prompt (default: 5). "
             "Old-ConSim prompts auto-scale this upward as needed."
         ),
     )
@@ -114,18 +136,10 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Batch size for HF generation; ignored by vLLM. If omitted, use a "
-            "model-specific H100 default."
-        ),
-    )
-    parser.add_argument(
-        "--flush-every-prompts",
-        type=int,
-        default=100,
-        help=(
-            "For new-ConSim, generate and flush results after at most this many "
-            "individual evaluation prompts, rounded to prompt-group boundaries "
-            "(default: 100)."
+            "Prompt batch size. For HF, this is the number of prompts per "
+            "generate() call. For vLLM, this is the number of prompts sent to "
+            "engine.generate() at once. If omitted, use a backend/model-specific "
+            "H100 default."
         ),
     )
     parser.add_argument(
@@ -134,8 +148,8 @@ def parse_args() -> argparse.Namespace:
         help="Device for model inference.",
     )
     args = parser.parse_args()
-    if args.flush_every_prompts < 1:
-        parser.error("--flush-every-prompts must be >= 1")
+    if args.batch_size is not None and args.batch_size < 1:
+        parser.error("--batch-size must be >= 1")
     if args.backend == "vllm" and importlib.util.find_spec("vllm") is None:
         parser.error("--backend vllm requested, but the vllm package is not installed")
     return args
@@ -257,6 +271,7 @@ def generate_completions(
             model,
             full_prompts,
             max_new_tokens=max_new_tokens,
+            batch_size=batch_size,
         )
     if backend == "hf":
         return generate_completions_hf(
@@ -293,6 +308,7 @@ def generate_completions_hf(
             generated_ids = model.generate(
                 **model_inputs,
                 max_new_tokens=max_new_tokens,
+                do_sample=False,
             )
 
         completion_ids = generated_ids[:, model_inputs["input_ids"].shape[1] :]
@@ -304,15 +320,19 @@ def generate_completions_hf(
     return generated_texts
 
 
-def load_vllm_engine(judge_model: str):
-    """Load a vLLM engine with prefix caching enabled."""
+def load_vllm_engine(judge_model: str, batch_size: int):
+    """Load a vLLM engine with conservative H100 memory limits."""
     from vllm import LLM
 
     return LLM(
         model=judge_model,
         dtype="auto",
-        enable_prefix_caching=True,
-        gpu_memory_utilization=0.9,
+        enable_prefix_caching=False,  # TODO: set True
+        gpu_memory_utilization=DEFAULT_VLLM_GPU_MEMORY_UTILIZATION,
+        max_model_len=DEFAULT_VLLM_MAX_MODEL_LEN,
+        max_num_batched_tokens=DEFAULT_VLLM_MAX_NUM_BATCHED_TOKENS,
+        max_num_seqs=batch_size,
+        enforce_eager=True,  # TODO: remove
     )
 
 
@@ -321,6 +341,7 @@ def generate_completions_vllm(
     full_prompts: list[str],
     *,
     max_new_tokens: int,
+    batch_size: int,
 ) -> list[str]:
     """Run vLLM generation for already-rendered prompts."""
     from vllm import SamplingParams
@@ -329,12 +350,17 @@ def generate_completions_vllm(
         temperature=0.0,
         max_tokens=max_new_tokens,
     )
-    outputs = engine.generate(
-        full_prompts,
-        sampling_params,
-        use_tqdm=False,
-    )
-    return [output.outputs[0].text.strip() for output in outputs]
+    generated_texts: list[str] = []
+    for batch_start in range(0, len(full_prompts), batch_size):
+        batch_prompts = full_prompts[batch_start : batch_start + batch_size]
+        outputs = engine.generate(
+            batch_prompts,
+            sampling_params,
+            use_tqdm=False,
+        )
+        generated_texts.extend(output.outputs[0].text.strip() for output in outputs)
+
+    return generated_texts
 
 
 def is_old_consim_prompt_group(prompt_group: dict) -> bool:
@@ -652,7 +678,7 @@ def old_consim_max_new_tokens(
 
     Old ConSim expects one ``Sample_N: <class_label>\\n`` line per evaluation
     sample. The default ``--max-new-tokens`` (32) is calibrated for new ConSim
-    (single-token answer) and silently caps old-ConSim scores: the model gets
+    (short answer) and silently caps old-ConSim scores: the model gets
     truncated after ~4-5 predictions, capping scores at ~0.5 even when the
     judge would otherwise answer correctly.
 
@@ -674,7 +700,7 @@ def main() -> None:
     # Resolve short model name.
     args.judge_model = resolve_llm_model(args.judge_model)
     if args.batch_size is None:
-        args.batch_size = default_hf_batch_size(args.judge_model)
+        args.batch_size = default_batch_size(args.judge_model, args.backend)
 
     prompt_paths = resolve_prompt_paths(args.prompt_file)
 
@@ -706,7 +732,7 @@ def main() -> None:
         print(f"  - {prompt_path}")
     print(f"Backend:      {args.backend}")
     print(f"Thinking:     {args.thinking}")
-    print(f"Batch size:   {args.batch_size} ({'ignored by vLLM' if args.backend == 'vllm' else 'HF generation'})")
+    print(f"Batch size:   {args.batch_size} ({args.backend})")
     print(f"Score file:   {score_path}")
     generation_log_path = get_generation_log_path(args.judge_model, args.thinking)
     generation_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -721,15 +747,19 @@ def main() -> None:
     tokenizer.padding_side = "left"
 
     if args.backend == "vllm":
-        model = load_vllm_engine(args.judge_model)
+        model = load_vllm_engine(args.judge_model, args.batch_size)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             args.judge_model,
-            torch_dtype="auto",
+            torch_dtype=torch.bfloat16,
             device_map=args.device,
+            low_cpu_mem_usage=True,
         )
-        if model.config.pad_token_id is None and tokenizer.pad_token_id is not None:
-            model.config.pad_token_id = tokenizer.pad_token_id
+        if getattr(model.config, "pad_token_id", None) is None and tokenizer.pad_token_id is not None:
+            try:
+                model.config.pad_token_id = tokenizer.pad_token_id
+            except AttributeError:
+                pass
         if (
             model.generation_config.pad_token_id is None
             and tokenizer.pad_token_id is not None
@@ -835,7 +865,7 @@ def main() -> None:
                         if (
                             chunk
                             and chunk_prompt_count + group_prompt_count
-                            > args.flush_every_prompts
+                            > args.batch_size
                         ):
                             write_new_consim_chunk(chunk)
                             chunk = []

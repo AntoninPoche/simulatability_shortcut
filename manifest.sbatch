@@ -2,12 +2,12 @@
 #SBATCH --job-name=manifest
 #SBATCH -A lxa@h100
 #SBATCH -C h100
-#SBATCH --qos=qos_gpu_h100-dev  # -t3 for longer jobs
+#SBATCH --qos=qos_gpu_h100-t3  # -t3 for longer jobs
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=24
 #SBATCH --gres=gpu:1
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=data/logs/%x_%A_%a.out
 #SBATCH --error=data/logs/%x_%A_%a.err
 

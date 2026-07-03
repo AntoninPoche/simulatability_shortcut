@@ -3,7 +3,7 @@
 module purge
 module load arch/h100
 module load uv/0.8.3
-module load cuda/12.8.0
+module load cuda/13.0.3
 
 source .venv/bin/activate
 

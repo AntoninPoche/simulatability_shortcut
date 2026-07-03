@@ -10,26 +10,22 @@ dependencies = [
     "tqdm",
     "ipykernel",
     "pandas",
-
-    # Do not pin torch manually. Let vLLM resolve the compatible torch build.
     "torch",
-
-    # Nightly required for Qwen3.5 support.
     "vllm",
 ]
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-vllm = { index = "vllm-nightly" }
+torch = { index = "pytorch-cu130" }
+vllm = { index = "vllm-nightly-cu130" }
 
 [[tool.uv.index]]
-name = "vllm-nightly"
-url = "https://wheels.vllm.ai/nightly"
+name = "vllm-nightly-cu130"
+url = "https://wheels.vllm.ai/nightly/cu130"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# UV_HTTP_TIMEOUT=300 uv sync --reinstall --prerelease=allow
+# UV_HTTP_TIMEOUT=300 UV_TORCH_BACKEND=cu130 uv sync --reinstall --prerelease=allow
