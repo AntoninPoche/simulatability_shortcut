@@ -1,9 +1,8 @@
 [project]
 name = "simulatability-shortcut"
 version = "0.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
 dependencies = [
-    "torch==2.11.0+cu126",
     "datasets",
     "interpreto",
     "transformers",
@@ -11,15 +10,26 @@ dependencies = [
     "tqdm",
     "ipykernel",
     "pandas",
+
+    # Do not pin torch manually. Let vLLM resolve the compatible torch build.
+    "torch",
+
+    # Nightly required for Qwen3.5 support.
+    "vllm",
 ]
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu126" }
+torch = { index = "pytorch-cu128" }
+vllm = { index = "vllm-nightly" }
 
 [[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+name = "vllm-nightly"
+url = "https://wheels.vllm.ai/nightly"
 explicit = true
 
-# UV_HTTP_TIMEOUT=300 uv sync
-# UV_HTTP_TIMEOUT=300 uv pip install --prerelease=allow -e .
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# UV_HTTP_TIMEOUT=300 uv sync --reinstall --prerelease=allow
