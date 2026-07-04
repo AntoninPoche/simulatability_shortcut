@@ -29,6 +29,7 @@ scripts/
   drop_prompt_rows.py   # Drop prompt JSONL rows by prompt-key field filters (CLI, writes .bak)
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
   drop_corrupted_prompt_rows.py # Remove corrupted prompt JSONL marker rows (CLI, writes .bak)
+  canonicalize_baselines.py # Canonicalize baseline keys/score rows to method=baseline, nb_concepts=None, interpretation=None
 
 utils/                        # Shared library package
   __init__.py
@@ -136,6 +137,14 @@ python scripts/drop_score_rows.py data/consim_Qwen_Qwen3.5-9B.csv dataset=RT spe
 ```
 
 Writes `<csv>.bak` first unless `--no-backup` is given.
+
+**Canonicalize baseline metadata** (writes backups by default):
+
+```bash
+python scripts/canonicalize_baselines.py --dry-run
+python scripts/canonicalize_baselines.py
+python scripts/canonicalize_baselines.py --aggregate-score-duplicates
+```
 
 **Drop rows from prompt JSONL files**:
 

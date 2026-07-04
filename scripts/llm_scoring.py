@@ -308,7 +308,6 @@ def generate_completions_hf(
             generated_ids = model.generate(
                 **model_inputs,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
             )
 
         completion_ids = generated_ids[:, model_inputs["input_ids"].shape[1] :]
@@ -753,7 +752,6 @@ def main() -> None:
             args.judge_model,
             torch_dtype=torch.bfloat16,
             device_map=args.device,
-            low_cpu_mem_usage=True,
         )
         if getattr(model.config, "pad_token_id", None) is None and tokenizer.pad_token_id is not None:
             try:

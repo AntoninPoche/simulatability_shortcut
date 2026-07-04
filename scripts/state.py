@@ -646,6 +646,23 @@ def is_baseline_prompt_type(prompt_type: object) -> bool:
     return text.startswith("B")
 
 
+def canonical_prompt_key(key: tuple) -> tuple:
+    """Normalize legacy baseline keys to the canonical baseline key shape.
+
+    Older concept prompt files encoded the generating concept config in baseline
+    keys, e.g. ``('baseline', 84, 'topk', 'B1', 'new_consim')``. New prompt
+    generation uses ``('baseline', None, None, 'B1', 'new_consim')``. State
+    treats the legacy shape as an alias so cached data does not appear missing
+    until expensive prompt files are regenerated.
+    """
+    if len(key) == len(KEY_COLUMNS) and key[4] == "baseline" and is_baseline_prompt_type(key[7]):
+        values = list(key)
+        values[5] = None
+        values[6] = None
+        return tuple(values)
+    return key
+
+
 def short_list(values: set[object], limit: int = 8) -> str:
     ordered = sorted(str(value) for value in values)
     if len(ordered) <= limit:
@@ -714,6 +731,7 @@ def summarize_coverage(
     print(f"score_path: {score_path}")
     print(f"score_rows: {score_rows}; unique_keys: {len(score_keys)}; duplicates: {score_dupes}")
     print(f"corrupted_prompt_keys: {len(corrupted_prompt_records)}")
+    score_keys_for_coverage = {canonical_prompt_key(key) for key in score_keys}
 
     expected_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
     for command in commands:
@@ -725,19 +743,21 @@ def summarize_coverage(
 
     prompt_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
     for key, record in prompt_records.items():
-        prompt_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
+        canonical_key = canonical_prompt_key(key)
+        prompt_by_triplet[(canonical_key[0], str(record["family"]), canonical_key[8])].add(canonical_key)
 
     corrupted_by_triplet: dict[tuple[str, str, str], set[tuple]] = defaultdict(set)
     for key, record in corrupted_prompt_records.items():
-        corrupted_by_triplet[(key[0], str(record["family"]), key[8])].add(key)
+        canonical_key = canonical_prompt_key(key)
+        corrupted_by_triplet[(canonical_key[0], str(record["family"]), canonical_key[8])].add(canonical_key)
 
     rows = []
     current_memory: dict[str, dict[str, float | int]] = {}
     all_triplets = sorted(
         set(expected_by_triplet) | set(prompt_by_triplet) | set(corrupted_by_triplet)
     )
-    prompt_keys = set(prompt_records)
-    corrupted_prompt_keys = set(corrupted_prompt_records)
+    prompt_keys = {canonical_prompt_key(key) for key in prompt_records}
+    corrupted_prompt_keys = {canonical_prompt_key(key) for key in corrupted_prompt_records}
     existing_prompt_keys = prompt_keys | corrupted_prompt_keys
     for triplet in all_triplets:
         memory_key = "|".join(triplet)
@@ -763,7 +783,7 @@ def summarize_coverage(
             corrupted_expected_count = len(corrupted_prompts)
             prompt_cov = "n/a"
             prompt_display = prompt_count
-        scored = len(prompts & score_keys)
+        scored = len(prompts & score_keys_for_coverage)
         score_ratio = scored / prompt_count if prompt_count else 0.0
         current_memory[memory_key] = {
             "expected": expected_count,
@@ -875,7 +895,7 @@ def summarize_coverage(
                 print(f"... {len(corrupted_generation) - limit} more corrupted rows")
 
     expected_all = set().union(*expected_by_pair.values()) if expected_by_pair else set()
-    unexpected_prompt_keys = existing_prompt_keys - expected_all
+    unexpected_prompt_keys = {canonical_prompt_key(key) for key in existing_prompt_keys} - expected_all
     if unexpected_prompt_keys and limit > 0:
         print("\nPrompt Keys Not Required By Generation Manifests")
         print("------------------------------------------------")
