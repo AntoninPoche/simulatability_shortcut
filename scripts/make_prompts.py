@@ -412,8 +412,10 @@ def generate_prompts_for_subset(
                     method_name = (
                         concept_resources.method_name if not is_baseline else "baseline"
                     )
-                    nb_concepts = concept_resources.nb_concepts
-                    interpretation_key = concept_resources.interpretation_key
+                    nb_concepts = None if is_baseline else concept_resources.nb_concepts
+                    interpretation_key = (
+                        None if is_baseline else concept_resources.interpretation_key
+                    )
                     construct_prompt_kwargs = {
                         "concepts_interpretation": concept_resources.concepts_interpretation,
                         "global_importances": concept_resources.global_importances,
@@ -552,8 +554,8 @@ def compute_expected_keys(
                             str(classes_subset),
                             seed,
                             "baseline" if is_baseline else method_name,
-                            nb_concepts,
-                            interpretation_key,
+                            None if is_baseline else nb_concepts,
+                            None if is_baseline else interpretation_key,
                             pt_name,
                             specification,
                         )

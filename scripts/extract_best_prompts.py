@@ -111,7 +111,34 @@ def prompt_family(path: Path, fields: dict[str, Any]) -> str | None:
     return None
 
 
-def keep_row(path: Path, fields: dict[str, Any]) -> bool:
+def best_concept_configs(rows: list[tuple[str, dict[str, Any]]]) -> set[tuple[Any, Any]]:
+    return {
+        (fields["nb_concepts"], fields["interpretation"])
+        for _line, fields in rows
+        if fields["specification"] not in EXCLUDED_SPECIFICATIONS
+        and fields["method"] == BEST_CONCEPT_METHOD
+        and fields["interpretation"] == BEST_CONCEPT_INTERPRETATION
+    }
+
+
+def has_canonical_concept_baselines(rows: list[tuple[str, dict[str, Any]]]) -> bool:
+    return any(
+        fields["specification"] not in EXCLUDED_SPECIFICATIONS
+        and fields["method"] == "baseline"
+        and fields["nb_concepts"] is None
+        and fields["interpretation"] is None
+        and is_baseline_prompt_type(fields["prompt_type"])
+        for _line, fields in rows
+    )
+
+
+def keep_row(
+    path: Path,
+    fields: dict[str, Any],
+    *,
+    concept_configs: set[tuple[Any, Any]],
+    canonical_concept_baselines: bool,
+) -> bool:
     if fields["specification"] in EXCLUDED_SPECIFICATIONS:
         return False
 
@@ -119,39 +146,54 @@ def keep_row(path: Path, fields: dict[str, Any]) -> bool:
     if family is None:
         return False
 
-    if is_baseline_prompt_type(fields["prompt_type"]):
-        return True
-
     if family == "attributions":
+        if is_baseline_prompt_type(fields["prompt_type"]):
+            return True
         return fields["method"] == BEST_ATTRIBUTION_METHOD
 
     if family == "concepts":
+        if is_baseline_prompt_type(fields["prompt_type"]):
+            if canonical_concept_baselines:
+                return fields["nb_concepts"] is None and fields["interpretation"] is None
+            return (fields["nb_concepts"], fields["interpretation"]) in concept_configs
         return (
             fields["method"] == BEST_CONCEPT_METHOD
             and fields["interpretation"] == BEST_CONCEPT_INTERPRETATION
         )
 
     if family == "rationales":
+        if is_baseline_prompt_type(fields["prompt_type"]):
+            return True
         return fields["method"] in BEST_RATIONALE_METHODS
 
     return False
 
 
 def selected_lines(path: Path) -> tuple[list[str], int]:
-    kept: list[str] = []
-    total = 0
+    rows: list[tuple[str, dict[str, Any]]] = []
     with open(path) as handle:
         for line_no, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
-            total += 1
             row = json.loads(line)
             if "key" not in row:
                 raise ValueError(f"{path}:{line_no}: missing prompt key")
             fields = key_dict(row["key"], path=path, line_no=line_no)
-            if keep_row(path, fields):
-                kept.append(line if line.endswith("\n") else line + "\n")
-    return kept, total
+            rows.append((line if line.endswith("\n") else line + "\n", fields))
+
+    concept_configs = best_concept_configs(rows)
+    canonical_concept_baselines = has_canonical_concept_baselines(rows)
+    kept = [
+        line
+        for line, fields in rows
+        if keep_row(
+            path,
+            fields,
+            concept_configs=concept_configs,
+            canonical_concept_baselines=canonical_concept_baselines,
+        )
+    ]
+    return kept, len(rows)
 
 
 def source_paths(input_dir: Path) -> list[Path]:

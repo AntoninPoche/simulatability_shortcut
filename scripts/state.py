@@ -93,6 +93,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--manifest-dir", type=Path, default=Path("manifests"))
     parser.add_argument("--prompt-dir", type=Path, default=Path("data/prompts"))
+    parser.add_argument("--best-prompt-dir", type=Path, default=Path("data/best_prompts"))
+    parser.add_argument(
+        "--best-prompt-manifest",
+        type=Path,
+        default=Path("manifests/best_prompts.tsv"),
+    )
     parser.add_argument("--score-path", type=Path, default=None)
     parser.add_argument(
         "--memory-dir",
@@ -230,8 +236,9 @@ def expected_keys(
             for prompt_type_abbrev in prompt_type_abbrevs:
                 for anonymized in (True, False):
                     prompt_type = f"A{prompt_type_abbrev}" if anonymized else prompt_type_abbrev
+                    is_baseline = prompt_type_abbrev.startswith("B")
                     method_for_key = (
-                        "baseline" if prompt_type_abbrev.startswith("B") else method_name
+                        "baseline" if is_baseline else method_name
                     )
                     keys.add(
                         (
@@ -240,8 +247,8 @@ def expected_keys(
                             str(classes_subset),
                             seed,
                             method_for_key,
-                            nb_concepts,
-                            interpretation_key,
+                            None if is_baseline else nb_concepts,
+                            None if is_baseline else interpretation_key,
                             prompt_type,
                             specification,
                         )
@@ -424,6 +431,21 @@ def load_score_keys(score_path: Path) -> tuple[set[tuple], int, int]:
     return unique, len(keys), len(keys) - len(unique)
 
 
+def load_score_keys_and_models(score_path: Path) -> tuple[set[tuple], int, int, set[str]]:
+    if not score_path.exists():
+        return set(), 0, 0, set()
+    keys = []
+    models = set()
+    with score_path.open(newline="") as handle:
+        for row in csv.DictReader(handle):
+            keys.append(score_row_key(row))
+            model = normalize_none(row.get("model"))
+            if model is not None:
+                models.add(str(model))
+    unique = set(keys)
+    return unique, len(keys), len(keys) - len(unique), models
+
+
 def load_valid_prompt_keys_from_file(prompt_path: Path) -> set[tuple]:
     keys = set()
     with prompt_path.open() as handle:
@@ -437,6 +459,48 @@ def load_valid_prompt_keys_from_file(prompt_path: Path) -> set[tuple]:
     return keys
 
 
+def load_valid_prompt_keys_from_dir(prompt_dir: Path) -> set[tuple]:
+    keys = set()
+    if not prompt_dir.exists():
+        return keys
+    for prompt_path in sorted(prompt_dir.glob("*.jsonl")):
+        keys.update(load_valid_prompt_keys_from_file(prompt_path))
+    return keys
+
+
+def best_prompt_manifest_rows(manifest_path: Path) -> dict[Path, int]:
+    rows = {}
+    if not manifest_path.exists():
+        return rows
+    with manifest_path.open() as handle:
+        for line_no, line in enumerate(handle, start=1):
+            parsed = parse_command(line.strip())
+            if parsed is None:
+                continue
+            _, tokens = parsed
+            pos = positional_tokens(tokens)
+            prompt_path = next((Path(token) for token in pos if token.endswith(".jsonl")), None)
+            if prompt_path is not None:
+                rows[prompt_path] = line_no
+    return rows
+
+
+def judge_label_from_score_path(score_path: Path) -> str:
+    stem = score_path.stem
+    if stem.startswith("consim_"):
+        stem = stem[len("consim_") :]
+    if stem.endswith("_v2"):
+        stem = stem[: -len("_v2")]
+    return stem
+
+
+def judge_arg_from_score_path(score_path: Path) -> str:
+    for alias in LLM_MODELS:
+        if score_path_for_model(alias) == score_path:
+            return alias
+    return judge_label_from_score_path(score_path)
+
+
 def score_path_for_model(model: str) -> Path:
     resolved = resolve_llm_model(model)
     return Path(f"data/consim_{resolved.replace('/', '_')}_v2.csv")
@@ -446,19 +510,33 @@ def memory_path_for_score(score_path: Path, memory_dir: Path) -> Path:
     return memory_dir / f"{score_path.stem}.json"
 
 
-def load_memory(memory_path: Path) -> dict[str, dict[str, float | int]]:
+def load_memory(memory_path: Path) -> dict[str, dict[str, dict[str, float | int]]]:
     if not memory_path.exists():
-        return {}
+        return {"rows": {}, "best_prompts": {}}
     with memory_path.open() as handle:
         payload = json.load(handle)
     rows = payload.get("rows", {})
-    return rows if isinstance(rows, dict) else {}
+    best_prompts = payload.get("best_prompts", {})
+    return {
+        "rows": rows if isinstance(rows, dict) else {},
+        "best_prompts": best_prompts if isinstance(best_prompts, dict) else {},
+    }
 
 
-def write_memory(memory_path: Path, rows: dict[str, dict[str, float | int]]) -> None:
+def write_memory(
+    memory_path: Path,
+    *,
+    rows: dict[str, dict[str, float | int]],
+    best_prompts: dict[str, dict[str, float | int]],
+) -> None:
     memory_path.parent.mkdir(parents=True, exist_ok=True)
     with memory_path.open("w") as handle:
-        json.dump({"rows": rows}, handle, indent=2, sort_keys=True)
+        json.dump(
+            {"rows": rows, "best_prompts": best_prompts},
+            handle,
+            indent=2,
+            sort_keys=True,
+        )
         handle.write("\n")
 
 
@@ -854,11 +932,122 @@ def summarize_coverage(
     return current_memory
 
 
+def summarize_best_prompt_coverage(
+    best_prompt_dir: Path,
+    best_prompt_manifest: Path,
+    active_prompt_keys: set[tuple],
+    previous_memory: dict[str, dict[str, float | int]],
+) -> dict[str, dict[str, float | int]]:
+    best_keys_by_path = {
+        prompt_path: load_valid_prompt_keys_from_file(prompt_path)
+        for prompt_path in sorted(best_prompt_dir.glob("*.jsonl"))
+    }
+    best_keys = set().union(*best_keys_by_path.values()) if best_keys_by_path else set()
+    active_best_keys = best_keys & active_prompt_keys
+    stale_best_keys = best_keys - active_prompt_keys
+    active_best_keys_by_path = {
+        prompt_path: keys & active_prompt_keys
+        for prompt_path, keys in best_keys_by_path.items()
+        if keys & active_prompt_keys
+    }
+    manifest_rows_by_path = best_prompt_manifest_rows(best_prompt_manifest)
+    current_memory: dict[str, dict[str, float | int]] = {}
+
+    print("\nBest Prompts Score Coverage")
+    print("===========================")
+    print(f"best_prompt_dir: {best_prompt_dir}")
+    print(f"expected_keys:   {len(best_keys)}")
+    if stale_best_keys:
+        print(f"stale_keys:      {len(stale_best_keys)} (not present in active prompts)")
+
+    if not best_keys:
+        print("No best-prompt keys found.")
+        return current_memory
+    if not active_best_keys:
+        print("No active best-prompt keys found.")
+        return current_memory
+
+    score_paths = sorted(Path("data").glob("consim*_v2.csv"))
+    if not score_paths:
+        print("No v2 score CSVs found.")
+        return current_memory
+
+    rows = []
+    missing_commands = []
+    for score_path in score_paths:
+        score_keys, score_rows, score_dupes, models = load_score_keys_and_models(score_path)
+        judge = judge_label_from_score_path(score_path)
+        previous = previous_memory.get(judge, {})
+        scored = len(active_best_keys & score_keys)
+        expected = len(active_best_keys)
+        stale = len(stale_best_keys)
+        missing_paths = [
+            prompt_path
+            for prompt_path, keys in active_best_keys_by_path.items()
+            if keys - score_keys
+        ]
+        missing_count = expected - scored
+        if missing_paths:
+            manifest_rows = [
+                manifest_rows_by_path[path]
+                for path in missing_paths
+                if path in manifest_rows_by_path
+            ]
+            command = ""
+            if manifest_rows:
+                judge_arg = judge_arg_from_score_path(score_path)
+                array = ",".join(str(row) for row in sorted(manifest_rows))
+                job_name = f"{judge_arg.split('-', 1)[0]}-best-scoring"
+                command = " ".join(
+                    [
+                        f"JUDGE_MODEL={shlex.quote(judge_arg)}",
+                        "sbatch",
+                        f"--job-name={shlex.quote(job_name)}",
+                        f"--array={array}%8",
+                        "manifest.sbatch",
+                        shlex.quote(str(best_prompt_manifest)),
+                    ]
+                )
+            missing_commands.append([judge, missing_count, len(manifest_rows), command])
+        current_memory[judge] = {
+            "scores": scored,
+            "expected": expected,
+            "coverage": scored / expected if expected else 0.0,
+            "stale": stale,
+            "csv_rows": score_rows,
+            "dupes": score_dupes,
+        }
+        rows.append(
+            [
+                judge,
+                number_with_delta(scored, previous.get("scores")),
+                number_with_delta(expected, previous.get("expected")),
+                coverage_with_delta(scored, expected, previous.get("coverage")),
+                number_with_delta(stale, previous.get("stale")),
+                number_with_delta(score_rows, previous.get("csv_rows")),
+                number_with_delta(score_dupes, previous.get("dupes")),
+                score_path,
+            ]
+        )
+
+    print_table(
+        ["judge", "scores", "expected", "coverage", "stale", "csv_rows", "dupes", "score_path"],
+        rows,
+    )
+    print("\nMissing Best Prompt Scoring Commands")
+    print("------------------------------------")
+    if not missing_commands:
+        print("All active best-prompt keys are scored for every v2 judge CSV.")
+    else:
+        print_table(["judge", "missing", "manifest_rows", "command"], missing_commands)
+    return current_memory
+
+
 def main() -> None:
     args = parse_args()
     score_path = args.score_path if args.score_path is not None else score_path_for_model(args.model)
     memory_path = memory_path_for_score(score_path, args.memory_dir)
-    previous_memory = {} if args.no_memory else load_memory(memory_path)
+    previous_memory = {"rows": {}, "best_prompts": {}} if args.no_memory else load_memory(memory_path)
 
     generation_commands, scoring_commands = load_manifest_commands(args.manifest_dir)
     prompt_records, corrupted_prompt_records, prompt_dupes = load_prompt_keys(
@@ -888,11 +1077,21 @@ def main() -> None:
         score_rows,
         score_dupes,
         score_path,
-        previous_memory,
+        previous_memory["rows"],
         args.limit,
     )
+    current_best_memory = summarize_best_prompt_coverage(
+        args.best_prompt_dir,
+        args.best_prompt_manifest,
+        set(prompt_records),
+        previous_memory["best_prompts"],
+    )
     if not args.no_memory:
-        write_memory(memory_path, current_memory)
+        write_memory(
+            memory_path,
+            rows=current_memory,
+            best_prompts=current_best_memory,
+        )
 
 
 if __name__ == "__main__":

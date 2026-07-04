@@ -127,7 +127,8 @@ def compute_expected_keys(
             for prompt_type_abbrev in CONCEPT_PROMPT_ABBREVS:
                 for anonym in [True, False]:
                     prompt_type_name = "A" + prompt_type_abbrev if anonym else prompt_type_abbrev
-                    method_for_key = "baseline" if prompt_type_abbrev.startswith("B") else method_name
+                    is_baseline = prompt_type_abbrev.startswith("B")
+                    method_for_key = "baseline" if is_baseline else method_name
                     key = str(
                         (
                             dataset_abbrev,
@@ -135,8 +136,8 @@ def compute_expected_keys(
                             str(classes_subset),
                             seed,
                             method_for_key,
-                            nb_concepts,
-                            interpretation_key,
+                            None if is_baseline else nb_concepts,
+                            None if is_baseline else interpretation_key,
                             prompt_type_name,
                             SPECIFICATION,
                         )
@@ -328,6 +329,10 @@ def main() -> None:
                     prompt_type_name = prompt_type.name.split("_")[0]
                     is_baseline = "baseline" in prompt_type.name
                     method_name = concept_resources.method_name if not is_baseline else "baseline"
+                    nb_concepts = None if is_baseline else concept_resources.nb_concepts
+                    interpretation_key = (
+                        None if is_baseline else concept_resources.interpretation_key
+                    )
                     setting = prompt_type.value._replace(anonymize_classes=anonym)
 
                     str_key = str(
@@ -337,8 +342,8 @@ def main() -> None:
                             str(classes_subset),
                             seed,
                             method_name,
-                            concept_resources.nb_concepts,
-                            concept_resources.interpretation_key,
+                            nb_concepts,
+                            interpretation_key,
                             prompt_type_name if not anonym else "A" + prompt_type_name,
                             SPECIFICATION,
                         )

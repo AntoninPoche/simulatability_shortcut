@@ -343,6 +343,14 @@ def main() -> None:
                             if not is_baseline
                             else "baseline"
                         )
+                        nb_concepts_for_key = (
+                            None if is_baseline else concept_resources.nb_concepts
+                        )
+                        interpretation_for_key = (
+                            None
+                            if is_baseline
+                            else concept_resources.interpretation_key
+                        )
 
                         str_key = str(
                             (
@@ -351,8 +359,8 @@ def main() -> None:
                                 str(classes_subset),
                                 seed,
                                 method_name,
-                                concept_resources.nb_concepts,
-                                concept_resources.interpretation_key,
+                                nb_concepts_for_key,
+                                interpretation_for_key,
                                 prompt_type_name
                                 if not anonym
                                 else "A" + prompt_type_name,
