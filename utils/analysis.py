@@ -47,8 +47,18 @@ def preprocess(df, seeds_per_bucket=5):
     """Preprocess the dataframe for analysis.
     This includes filtering out certain columns, averaging duplicate rows, and aggregating seeds into buckets.
     """
+    df = df.copy()
+    score = pd.to_numeric(df["score"], errors="coerce")
+    if "num_correct" in df.columns:
+        fallback_score = pd.to_numeric(df["num_correct"], errors="coerce")
+        score = score.fillna(fallback_score.where(fallback_score.between(0, 1)))
+    df["score"] = score
+
+    required = ["dataset", "model", "classes_subset", "seed", "method", "prompt_type", "specification", "score"]
+    df = df.dropna(subset=[col for col in required if col in df.columns])
+
     df = keep_ge_class_subset_len(df, 3)
-    df.drop(columns=["nb_concepts", "time", "num_correct", "num_valid", "num_expected"], inplace=True)
+    df.drop(columns=["nb_concepts", "time", "num_correct", "num_valid", "num_expected"], inplace=True, errors="ignore")
 
     index_cols = df.columns.drop("score").tolist()
 

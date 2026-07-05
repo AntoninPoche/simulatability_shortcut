@@ -305,24 +305,19 @@ def plot_pairwise_comparison_matrices(
     diff_std = diff_std.reindex(index=order, columns=order)
     pvalues = pvalues.reindex(index=order, columns=order)
 
-    percentage_with_rank = percentage.copy()
-    percentage_with_rank["rank"] = ranking.reindex(order)
-
     fig_pct, ax_pct = plt.subplots(figsize=figsize)
-    pct_values = percentage_with_rank.to_numpy(dtype=float)
+    pct_values = percentage.to_numpy(dtype=float)
     pct_image = ax_pct.imshow(pct_values, cmap="coolwarm", vmin=0, vmax=100)
     for row in range(pct_values.shape[0]):
         for col in range(pct_values.shape[1]):
             text = f"{pct_values[row, col]:.0f}"
-            weight = "bold" if col == pct_values.shape[1] - 1 else "normal"
-            ax_pct.text(col, row, text, ha="center", va="center", weight=weight, fontsize=PLOT_FONT_SIZE - 1)
-    ax_pct.set_xticks(np.arange(percentage_with_rank.shape[1]))
-    ax_pct.set_yticks(np.arange(percentage_with_rank.shape[0]))
-    ax_pct.set_xticklabels(percentage_with_rank.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
-    ax_pct.set_yticklabels(percentage_with_rank.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
+            ax_pct.text(col, row, text, ha="center", va="center", fontsize=PLOT_FONT_SIZE - 1)
+    ax_pct.set_xticks(np.arange(percentage.shape[1]))
+    ax_pct.set_yticks(np.arange(percentage.shape[0]))
+    ax_pct.set_xticklabels(percentage.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
+    ax_pct.set_yticklabels(percentage.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
     ax_pct.set_xlabel("Methods 2")
     ax_pct.set_ylabel("Methods 1")
-    fig_pct.colorbar(pct_image, ax=ax_pct, label="Win rate of method 1 over method 2 (%)")
     fig_pct.tight_layout()
 
     fig_diff, ax_diff = plt.subplots(figsize=figsize)
@@ -339,7 +334,6 @@ def plot_pairwise_comparison_matrices(
     ax_diff.set_yticklabels(diff_mean.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
     ax_diff.set_xlabel("Methods 2")
     ax_diff.set_ylabel("Methods 1")
-    fig_diff.colorbar(diff_image, ax=ax_diff, label="Score difference mean")
     fig_diff.tight_layout()
 
-    return fig_pct, fig_diff, percentage_with_rank, diff_mean
+    return fig_pct, fig_diff, percentage, diff_mean
