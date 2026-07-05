@@ -13,6 +13,20 @@ from scipy.stats import ttest_1samp, ttest_rel
 from utils.analysis import filter_keep
 
 
+PLOT_FONT_SIZE = 13
+plt.rcParams.update(
+    {
+        "font.size": PLOT_FONT_SIZE,
+        "axes.labelsize": PLOT_FONT_SIZE,
+        "axes.titlesize": PLOT_FONT_SIZE + 1,
+        "xtick.labelsize": PLOT_FONT_SIZE - 1,
+        "ytick.labelsize": PLOT_FONT_SIZE - 1,
+        "legend.fontsize": PLOT_FONT_SIZE - 1,
+        "legend.title_fontsize": PLOT_FONT_SIZE,
+    }
+)
+
+
 def plot_accuracies_violins(
     scores: pd.Series,
     *,
@@ -29,11 +43,11 @@ def plot_accuracies_violins(
         if level not in scores.index.names:
             raise ValueError(f"Missing index level {level!r}.")
 
-    scores = scores.groupby(level=scores.index.names).mean().dropna()
+    scores = scores.groupby(level=scores.index.names, dropna=False).mean().dropna()
     groups = list(scores.index.get_level_values(group_col).unique())
     atoms = list(scores.index.get_level_values(atom_col).unique())
-    if "NoExplanation" in atoms:
-        atoms = [atom for atom in atoms if atom != "NoExplanation"] + ["NoExplanation"]
+    baseline_atoms = {"B", "B1", "B2", "NoExplanation"}
+    atoms = [atom for atom in atoms if atom not in baseline_atoms] + [atom for atom in atoms if atom in baseline_atoms]
     if not groups or not atoms:
         raise ValueError("No data to plot.")
 
@@ -59,9 +73,9 @@ def plot_accuracies_violins(
             showmeans=True,
             showmedians=False,
         )
-        if atom == "NoExplanation":
+        if atom in baseline_atoms:
             for body in violins["bodies"]:
-                body.set_facecolor("black")
+                body.set_facecolor("#303030")
                 body.set_edgecolor("black")
             for line_key in ("cmeans", "cmaxes", "cmins", "cbars"):
                 violins[line_key].set_edgecolor("black")
@@ -69,9 +83,9 @@ def plot_accuracies_violins(
         handles.append(patches.Patch(color=violins["bodies"][0].get_facecolor().flatten()))
         labels.append(atom)
 
-    if "NoExplanation" in atoms:
+    for baseline_atom in [atom for atom in atoms if atom in baseline_atoms]:
         for i, group in enumerate(groups):
-            values = _values_at(scores, group_col, group, atom_col, "NoExplanation")
+            values = _values_at(scores, group_col, group, atom_col, baseline_atom)
             if values.size == 0:
                 continue
             ax.plot(
@@ -84,8 +98,9 @@ def plot_accuracies_violins(
     xlabel = "Prompt types" if group_col == "prompt_type" else group_col.replace("_", " ").title()
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    ax.set_ylim(0, 1)
     ax.set_xticks(bars_index + bar_width * (len(atoms) - 1) / 2)
-    ax.set_xticklabels(groups)
+    ax.set_xticklabels(groups, fontsize=PLOT_FONT_SIZE - 1)
     if title is not None:
         ax.set_title(title)
     ax.legend(handles, labels, bbox_to_anchor=(1.01, 1), loc="upper left")
@@ -155,7 +170,7 @@ def plot_difference_bars(
         f"{key}\n{_format_pvalue_tick(pvalues.loc[key], alpha=pvalue_alpha)}"
         for key in means.index
     ]
-    ax.set_xticklabels(xticklabels, fontsize=8)
+    ax.set_xticklabels(xticklabels, fontsize=PLOT_FONT_SIZE - 1)
     ax.set_ylabel(ylabel)
     if title is not None:
         ax.set_title(title)
@@ -246,7 +261,7 @@ def plot_pairwise_comparison_matrices(
 
     # Average exact duplicate rows first. This handles rescoring duplicates and
     # repeated baseline rows without changing the experimental key names.
-    scores = scores.groupby(level=scores.index.names).mean().dropna()
+    scores = scores.groupby(level=scores.index.names, dropna=False).mean().dropna()
     contenders = list(scores.index.get_level_values(compared_index).unique())
     if len(contenders) < 2:
         raise ValueError("Need at least two contenders for a pairwise matrix.")
@@ -300,11 +315,11 @@ def plot_pairwise_comparison_matrices(
         for col in range(pct_values.shape[1]):
             text = f"{pct_values[row, col]:.0f}"
             weight = "bold" if col == pct_values.shape[1] - 1 else "normal"
-            ax_pct.text(col, row, text, ha="center", va="center", weight=weight)
+            ax_pct.text(col, row, text, ha="center", va="center", weight=weight, fontsize=PLOT_FONT_SIZE - 1)
     ax_pct.set_xticks(np.arange(percentage_with_rank.shape[1]))
     ax_pct.set_yticks(np.arange(percentage_with_rank.shape[0]))
-    ax_pct.set_xticklabels(percentage_with_rank.columns, rotation=45, ha="right")
-    ax_pct.set_yticklabels(percentage_with_rank.index, rotation=0)
+    ax_pct.set_xticklabels(percentage_with_rank.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
+    ax_pct.set_yticklabels(percentage_with_rank.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
     ax_pct.set_xlabel("Methods 2")
     ax_pct.set_ylabel("Methods 1")
     fig_pct.colorbar(pct_image, ax=ax_pct, label="Win rate of method 1 over method 2 (%)")
@@ -317,11 +332,11 @@ def plot_pairwise_comparison_matrices(
     for i, j in product(range(diff_mean.shape[0]), range(diff_mean.shape[1])):
         annot = f"{diff_mean.iloc[i, j]:.2f}\n±{diff_std.iloc[i, j]:.2f}"
         weight = "bold" if pvalues.iloc[i, j] < ttest_rel_alpha else "normal"
-        ax_diff.text(j, i, annot, ha="center", va="center", weight=weight, fontsize="small")
+        ax_diff.text(j, i, annot, ha="center", va="center", weight=weight, fontsize=PLOT_FONT_SIZE - 2)
     ax_diff.set_xticks(np.arange(diff_mean.shape[1]))
     ax_diff.set_yticks(np.arange(diff_mean.shape[0]))
-    ax_diff.set_xticklabels(diff_mean.columns, rotation=45, ha="right")
-    ax_diff.set_yticklabels(diff_mean.index, rotation=0)
+    ax_diff.set_xticklabels(diff_mean.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
+    ax_diff.set_yticklabels(diff_mean.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
     ax_diff.set_xlabel("Methods 2")
     ax_diff.set_ylabel("Methods 1")
     fig_diff.colorbar(diff_image, ax=ax_diff, label="Score difference mean")
