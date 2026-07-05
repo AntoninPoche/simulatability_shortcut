@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import fcntl
 import importlib.util
 import json
 import math
@@ -30,7 +31,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
 import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -42,6 +42,24 @@ from utils.data import iter_jsonl, LLM_MODELS, resolve_llm_model
 
 
 PROMPT_DIR = Path("data/prompts")
+KEY_FIELDS = [
+    "dataset",
+    "model",
+    "classes_subset",
+    "seed",
+    "method",
+    "nb_concepts",
+    "interpretation",
+    "prompt_type",
+    "specification",
+]
+SCORE_COLUMNS = KEY_FIELDS + [
+    "time",
+    "score",
+    "num_correct",
+    "num_valid",
+    "num_expected",
+]
 SAMPLE_ID_RE = re.compile(r"\bSample_(\d+)\s*:")
 CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
 BARE_INT_RE = re.compile(r"^\d+$")
@@ -170,27 +188,95 @@ def get_generation_log_path(judge_model: str, thinking: bool) -> Path:
     return Path(f"data/generations/{model_slug}{thinking_str}.jsonl")
 
 
-def load_treated_keys(score_path: Path) -> set[str]:
+def parse_nullable_int(value: str) -> int | None:
+    if value in {"", "nan", "None", "<NA>"}:
+        return None
+    return int(float(value))
+
+
+def score_key_from_row(row: dict[str, str]) -> str:
+    """Rebuild the prompt key string from one score CSV row."""
+    key = (
+        row["dataset"],
+        row["model"],
+        row["classes_subset"],
+        int(row["seed"]),
+        row["method"],
+        parse_nullable_int(row["nb_concepts"]),
+        row["interpretation"]
+        if row["interpretation"] not in {"", "nan", "None", "<NA>"}
+        else None,
+        row["prompt_type"],
+        row["specification"],
+    )
+    return str(key)
+
+
+def load_treated_keys(score_path: Path) -> tuple[set[str], list[str]]:
     """Load keys already scored, or create the CSV with header."""
     if not score_path.exists():
         score_path.parent.mkdir(parents=True, exist_ok=True)
         with open(score_path, "w") as handle:
-            handle.write(
-                "dataset,model,classes_subset,seed,method,nb_concepts,"
-                "interpretation,prompt_type,specification,time,score,"
-                "num_correct,num_valid,num_expected\n"
-            )
-        return set()
+            handle.write(",".join(SCORE_COLUMNS) + "\n")
+        return set(), SCORE_COLUMNS
 
-    scores_df = pd.read_csv(
-        score_path,
-        index_col=list(range(9)),
-        dtype={"seed": "Int64", "nb_concepts": "Int64"},
+    treated_keys = set()
+    skipped_rows = 0
+    with open(score_path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError(f"Score CSV has no header: {score_path}")
+        missing_columns = set(SCORE_COLUMNS) - set(reader.fieldnames)
+        if missing_columns:
+            raise ValueError(
+                f"Score CSV {score_path} is missing columns: {sorted(missing_columns)}"
+            )
+        for row in reader:
+            if None in row:
+                skipped_rows += 1
+                continue
+            try:
+                treated_keys.add(score_key_from_row(row))
+            except (KeyError, TypeError, ValueError):
+                skipped_rows += 1
+
+    if skipped_rows:
+        print(f"Warning: skipped {skipped_rows} malformed score rows in {score_path}")
+    return treated_keys, reader.fieldnames
+
+
+def score_csv_row(
+    header: list[str],
+    key: tuple,
+    *,
+    time,
+    score: float,
+    num_correct: int,
+    num_valid: int,
+    num_expected: int,
+) -> list[object]:
+    """Format a score row in the same column order as the target CSV."""
+    row = dict(zip(KEY_FIELDS, key))
+    row.update(
+        {
+            "time": time,
+            "score": score,
+            "num_correct": num_correct,
+            "num_valid": num_valid,
+            "num_expected": num_expected,
+        }
     )
-    return set(
-        str(index).replace("nan", "None").replace("<NA>", "None")
-        for index in scores_df.index
-    )
+    return [row[column] for column in header]
+
+
+def write_score_row(handle, writer: csv.writer, row: list[object]) -> None:
+    """Append one CSV row under a file lock for array-job safety."""
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        writer.writerow(row)
+        handle.flush()
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def resolve_prompt_paths(prompt_file: list[Path] | None) -> list[Path]:
@@ -723,7 +809,7 @@ def main() -> None:
     prompt_paths = resolve_prompt_paths(args.prompt_file)
 
     score_path = get_score_path(args.judge_model, args.thinking)
-    treated_keys = load_treated_keys(score_path)
+    treated_keys, score_header = load_treated_keys(score_path)
 
     # Determine which keys need scoring. Corrupted prompt groups are explicit
     # run markers and must never be forwarded to the judge.
@@ -858,17 +944,19 @@ def main() -> None:
                             num_valid,
                             num_expected,
                         )
-                        writer.writerow(
-                            ast.literal_eval(prompt_group["key"])
-                            + (
-                                datetime.now(),
-                                accuracy,
-                                num_correct,
-                                num_valid,
-                                num_expected,
+                        write_score_row(
+                            handle,
+                            writer,
+                            score_csv_row(
+                                score_header,
+                                ast.literal_eval(prompt_group["key"]),
+                                time=datetime.now(),
+                                score=accuracy,
+                                num_correct=num_correct,
+                                num_valid=num_valid,
+                                num_expected=num_expected,
                             )
                         )
-                        handle.flush()
                         total_progress.update(1)
 
                 def write_new_consim_batch(new_prompt_groups: list[dict]) -> None:
@@ -946,17 +1034,19 @@ def main() -> None:
                     )
 
                     # Append score row.
-                    writer.writerow(
-                        ast.literal_eval(prompt_group["key"])
-                        + (
-                            datetime.now(),
-                            accuracy,
-                            num_correct,
-                            num_valid,
-                            num_expected,
+                    write_score_row(
+                        handle,
+                        writer,
+                        score_csv_row(
+                            score_header,
+                            ast.literal_eval(prompt_group["key"]),
+                            time=datetime.now(),
+                            score=accuracy,
+                            num_correct=num_correct,
+                            num_valid=num_valid,
+                            num_expected=num_expected,
                         )
                     )
-                    handle.flush()
                     total_progress.update(1)
 
                 write_new_consim_batch(new_consim_batch)
