@@ -51,13 +51,14 @@ DEFAULT_BATCH_SIZES = {
     "hf": {
         "Qwen/Qwen3.5-2B": 64,
         "meta-llama/Llama-3.2-3B-Instruct": 64,
-        "meta-llama/Llama-3.1-8B-Instruct": 32,
+        "meta-llama/Llama-3.1-8B-Instruct": 16,
         "Qwen/Qwen3.5-9B": 32,
         "microsoft/phi-4": 16,
         "mistralai/Ministral-3-14B-Instruct-2512": 16,
         "openai/gpt-oss-20b": 1,
         "Qwen/Qwen3.6-27B": 8,
         "google/gemma-4-31B-it": 4,
+        "google/gemma-4-12B-it": 4,
     },
     "vllm": {
         "Qwen/Qwen3.5-2B": 64,
@@ -308,6 +309,7 @@ def generate_completions_hf(
             generated_ids = model.generate(
                 **model_inputs,
                 max_new_tokens=max_new_tokens,
+                do_sample=False,
             )
 
         completion_ids = generated_ids[:, model_inputs["input_ids"].shape[1] :]
@@ -448,6 +450,16 @@ def label_pattern(label: str) -> re.Pattern[str]:
     )
 
 
+def label_prefix_continuation_pattern(label: str) -> re.Pattern[str]:
+    """Match a label at the start when generation continues past the answer."""
+    label_parts = [part for part in re.split(r"[^A-Za-z0-9]+", label) if part]
+    if label_parts:
+        body = r"[\s_/+-]*".join(re.escape(part) for part in label_parts)
+    else:
+        body = re.escape(label)
+    return re.compile(rf"^\s*{body}(?:$|[^A-Za-z])", re.IGNORECASE)
+
+
 def match_expected_label(candidate: str, expected_answers: list[str]) -> str | None:
     """Return the expected label matched by a raw candidate span, if any."""
     candidate_norm = normalize_label_text(candidate)
@@ -469,6 +481,13 @@ def match_expected_label(candidate: str, expected_answers: list[str]) -> str | N
         if label_pattern(expected).search(candidate_norm):
             return expected
         if expected.lower() == "sci/tech" and SCI_TECH_RE.search(candidate_norm):
+            return expected
+
+    # Some judges continue the demonstrated "Label: X\nExplanation: ..." format.
+    # With short generation budgets this yields fragments like "World1: #" or
+    # "Class_11". Keep this as a last resort so existing stricter matches win.
+    for expected in sorted(expected_answers, key=len, reverse=True):
+        if label_prefix_continuation_pattern(expected).match(candidate_norm):
             return expected
 
     return None

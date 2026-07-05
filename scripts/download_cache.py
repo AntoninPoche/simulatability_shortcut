@@ -40,6 +40,7 @@ LLM_MODELS = {
     "phi4": "microsoft/phi-4",
     "ministral-14b": "mistralai/Ministral-3-14B-Instruct-2512",
     "gemma4-31b": "google/gemma-4-31B-it",
+    "gemma4-12b": "google/gemma-4-12B-it",
     "gpt-oss-20b": "openai/gpt-oss-20b",
 }
 
