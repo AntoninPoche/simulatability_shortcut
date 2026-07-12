@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from itertools import combinations, product
+import math
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -13,15 +14,15 @@ from scipy.stats import ttest_1samp, ttest_rel
 from utils.analysis import filter_keep
 
 
-PLOT_FONT_SIZE = 13
+PLOT_FONT_SIZE = 10
 plt.rcParams.update(
     {
         "font.size": PLOT_FONT_SIZE,
         "axes.labelsize": PLOT_FONT_SIZE,
         "axes.titlesize": PLOT_FONT_SIZE + 1,
-        "xtick.labelsize": PLOT_FONT_SIZE - 1,
-        "ytick.labelsize": PLOT_FONT_SIZE - 1,
-        "legend.fontsize": PLOT_FONT_SIZE - 1,
+        "xtick.labelsize": PLOT_FONT_SIZE,
+        "ytick.labelsize": PLOT_FONT_SIZE,
+        "legend.fontsize": PLOT_FONT_SIZE,
         "legend.title_fontsize": PLOT_FONT_SIZE,
     }
 )
@@ -33,6 +34,9 @@ def plot_accuracies_violins(
     group_col: str = "prompt_type",
     atom_col: str = "method",
     ax: plt.Axes | None = None,
+    figsize: tuple[float, float] = (7.0, 3.2),
+    font_size: float = PLOT_FONT_SIZE,
+    legend_font_size: float | None = None,
     ylabel: str = "Simulatability score",
     title: str | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
@@ -51,11 +55,11 @@ def plot_accuracies_violins(
     if not groups or not atoms:
         raise ValueError("No data to plot.")
 
-    bar_width = 0.12
+    bar_width = min(0.14, 0.9 / len(atoms))
     bars_index = np.arange(len(groups))
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(18, 6))
+        fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
 
@@ -81,7 +85,7 @@ def plot_accuracies_violins(
                 violins[line_key].set_edgecolor("black")
 
         handles.append(patches.Patch(color=violins["bodies"][0].get_facecolor().flatten()))
-        labels.append(atom)
+        labels.append(_display_label(atom))
 
     for baseline_atom in [atom for atom in atoms if atom in baseline_atoms]:
         for i, group in enumerate(groups):
@@ -96,19 +100,33 @@ def plot_accuracies_violins(
             )
 
     xlabel = "Prompt types" if group_col == "prompt_type" else group_col.replace("_", " ").title()
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel, fontsize=font_size)
+    ax.set_ylabel(ylabel, fontsize=font_size)
     ax.set_ylim(0, 1)
+    ax.set_xlim(
+        bars_index[0] - bar_width,
+        bars_index[-1] + bar_width * len(atoms),
+    )
     ax.set_xticks(bars_index + bar_width * (len(atoms) - 1) / 2)
-    ax.set_xticklabels(groups, fontsize=PLOT_FONT_SIZE - 1)
+    ax.set_xticklabels(groups, fontsize=font_size)
+    ax.tick_params(axis="y", labelsize=font_size)
     if title is not None:
-        ax.set_title(title)
-    ax.legend(handles, labels, bbox_to_anchor=(1.01, 1), loc="upper left")
+        ax.set_title(title, fontsize=font_size + 1)
+    ax.legend(
+        handles,
+        labels,
+        loc="lower left",
+        bbox_to_anchor=(0, 0.01, 1, 0.01),
+        mode="expand",
+        ncol=min(4, len(labels)),
+        fontsize=legend_font_size or (font_size - 3 if len(labels) > 7 else font_size - 1),
+        framealpha=0.92,
+        borderpad=0.35,
+        handlelength=1.2,
+    )
     fig.tight_layout()
 
     return fig, ax
-
-
 def _values_at(
     scores: pd.Series,
     group_col: str,
@@ -125,8 +143,9 @@ def plot_difference_bars(
     differences: pd.Series,
     *,
     ax: plt.Axes | None = None,
+    figsize: tuple[float, float] = (3.35, 3.0),
     comparison_col: str = "prompt_type",
-    ylabel: str = "Score difference",
+    ylabel: str = "Simulatability difference",
     title: str | None = None,
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
@@ -148,7 +167,7 @@ def plot_difference_bars(
         pvalues.loc[key] = ttest_1samp(values, popmean=0).pvalue
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(max(7, 0.7 * len(means) + 3), 4))
+        fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
 
@@ -167,14 +186,23 @@ def plot_difference_bars(
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xticks(x)
     xticklabels = [
-        f"{key}\n{_format_pvalue_tick(pvalues.loc[key], alpha=pvalue_alpha)}"
+        f"{key} {_format_pvalue_tick(pvalues.loc[key], alpha=pvalue_alpha)}"
         for key in means.index
     ]
-    ax.set_xticklabels(xticklabels, fontsize=PLOT_FONT_SIZE - 1)
+    tick_font_size = 6.5 if len(means) > 7 else PLOT_FONT_SIZE - 1
+    tick_rotation = 65 if len(means) > 7 else 45
+    ax.set_xticklabels(
+        xticklabels,
+        rotation=tick_rotation,
+        ha="right",
+        rotation_mode="anchor",
+        fontsize=tick_font_size,
+    )
     ax.set_ylabel(ylabel)
     if title is not None:
         ax.set_title(title)
     ax.grid(axis="y", linestyle=":", alpha=0.5)
+    fig.tight_layout()
 
     return fig, ax
 
@@ -182,10 +210,10 @@ def plot_difference_bars(
 def _format_pvalue_tick(pvalue: float, *, alpha: float) -> str:
     if pd.isna(pvalue):
         text = "p=n/a"
-    elif pvalue < 0.001:
-        text = "p<0.001"
+    elif pvalue < 0.01:
+        text = "p<.01"
     else:
-        text = f"p={pvalue:.3f}"
+        text = f"p={pvalue:.2f}".replace("=0.", "=.")
 
     if pd.notna(pvalue) and pvalue < alpha:
         return r"$\bf{" + text.replace("<", r"<") + "}$"
@@ -196,7 +224,7 @@ def panel_difference_bars(
     *,
     panel_col: str | None = None,
     comparison_col: str = "prompt_type",
-    ylabel: str = "Score difference",
+    ylabel: str = "Simulatability difference",
     title: str | None = None,
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
@@ -211,31 +239,37 @@ def panel_difference_bars(
     if differences.empty:
         raise ValueError("Cannot plot an empty differences dataframe.")
 
-    panels = differences.index.get_level_values(panel_col).unique()
+    panels = list(differences.index.get_level_values(panel_col).unique())
+    ncols = min(3, len(panels))
+    nrows = math.ceil(len(panels) / ncols)
     fig, axes = plt.subplots(
-        len(panels),
-        1,
-        figsize=(max(7, 0.7 * differences.index.get_level_values(comparison_col).nunique() + 3), 4 * len(panels)),
+        nrows,
+        ncols,
+        figsize=(7.0, 2.7 * nrows),
         sharey=True,
         squeeze=False,
     )
 
-    for ax, panel_value in zip(axes[:, 0], panels):
+    for panel_index, (ax, panel_value) in enumerate(zip(axes.flat, panels)):
         plot_difference_bars(
             filter_keep(differences, keep={panel_col: panel_value}),
             ax=ax,
             comparison_col=comparison_col,
-            ylabel=ylabel,
-            title=f"{panel_col}={panel_value}",
+            ylabel=ylabel if panel_index % ncols == 0 else "",
+            title=str(panel_value),
             positive_color=positive_color,
             negative_color=negative_color,
             pvalue_alpha=pvalue_alpha,
         )
 
-    # if title is not None:
-    #     fig.suptitle(title, fontsize=10)
-    #     fig.tight_layout(rect=[0, 0, 1, 0.93])
-    fig.tight_layout()
+    for ax in axes.flat[len(panels):]:
+        ax.set_visible(False)
+
+    if title is not None:
+        fig.suptitle(title)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+    else:
+        fig.tight_layout()
 
     return fig, axes
 
@@ -245,7 +279,7 @@ def plot_pairwise_comparison_matrices(
     *,
     compared_index: str = "method",
     ttest_rel_alpha: float = 0.05,
-    figsize: tuple[float, float] = (10, 8),
+    figsize: tuple[float, float] = (3.6, 3.4),
 ) -> tuple[plt.Figure, plt.Figure, pd.DataFrame, pd.DataFrame]:
     """Plot old-ConSim-style pairwise win-rate and difference matrices.
 
@@ -267,13 +301,15 @@ def plot_pairwise_comparison_matrices(
         raise ValueError("Need at least two contenders for a pairwise matrix.")
 
     n_contenders = len(contenders)
-    percentage = pd.DataFrame(0.0, index=contenders, columns=contenders)
-    diff_mean = pd.DataFrame(0.0, index=contenders, columns=contenders)
-    diff_std = pd.DataFrame(0.0, index=contenders, columns=contenders)
+    percentage = pd.DataFrame(np.nan, index=contenders, columns=contenders)
+    diff_mean = pd.DataFrame(np.nan, index=contenders, columns=contenders)
+    diff_std = pd.DataFrame(np.nan, index=contenders, columns=contenders)
     pvalues = pd.DataFrame(1.0, index=contenders, columns=contenders)
 
     for contender in contenders:
         percentage.loc[contender, contender] = 50
+        diff_mean.loc[contender, contender] = 0
+        diff_std.loc[contender, contender] = 0
 
     for c1, c2 in combinations(contenders, 2):
         sc1 = scores.xs(c1, level=compared_index).dropna()
@@ -307,33 +343,51 @@ def plot_pairwise_comparison_matrices(
 
     fig_pct, ax_pct = plt.subplots(figsize=figsize)
     pct_values = percentage.to_numpy(dtype=float)
-    pct_image = ax_pct.imshow(pct_values, cmap="coolwarm", vmin=0, vmax=100)
+    ax_pct.imshow(pct_values, cmap="coolwarm", vmin=0, vmax=100)
+    annotation_size = 6 if n_contenders >= 7 and figsize[0] < 5 else 8
     for row in range(pct_values.shape[0]):
         for col in range(pct_values.shape[1]):
-            text = f"{pct_values[row, col]:.0f}"
-            ax_pct.text(col, row, text, ha="center", va="center", fontsize=PLOT_FONT_SIZE - 1)
+            value = pct_values[row, col]
+            if np.isnan(value):
+                continue
+            text = f"{value:.0f}%"
+            ax_pct.text(col, row, text, ha="center", va="center", fontsize=annotation_size + 1, color="black")
     ax_pct.set_xticks(np.arange(percentage.shape[1]))
     ax_pct.set_yticks(np.arange(percentage.shape[0]))
-    ax_pct.set_xticklabels(percentage.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
-    ax_pct.set_yticklabels(percentage.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
-    ax_pct.set_xlabel("Methods 2")
-    ax_pct.set_ylabel("Methods 1")
+    display_columns = [_display_label(value) for value in percentage.columns]
+    display_index = [_display_label(value) for value in percentage.index]
+    ax_pct.set_xticklabels(display_columns, rotation=45, ha="right", rotation_mode="anchor")
+    ax_pct.set_yticklabels(display_index, rotation=0)
     fig_pct.tight_layout()
 
     fig_diff, ax_diff = plt.subplots(figsize=figsize)
     diff_values = diff_mean.to_numpy(dtype=float)
     max_abs_diff = max(float(np.nanmax(np.abs(diff_values))), 1e-9)
-    diff_image = ax_diff.imshow(diff_values, cmap="coolwarm", vmin=-max_abs_diff, vmax=max_abs_diff)
+    ax_diff.imshow(diff_values, cmap="coolwarm", vmin=-max_abs_diff, vmax=max_abs_diff)
     for i, j in product(range(diff_mean.shape[0]), range(diff_mean.shape[1])):
-        annot = f"{diff_mean.iloc[i, j]:.2f}\n±{diff_std.iloc[i, j]:.2f}"
+        value = diff_mean.iloc[i, j]
+        if pd.isna(value):
+            continue
+        annot = "—" if i == j else f"{value:.2f}\n±{diff_std.iloc[i, j]:.2f}"
         weight = "bold" if pvalues.iloc[i, j] < ttest_rel_alpha else "normal"
-        ax_diff.text(j, i, annot, ha="center", va="center", weight=weight, fontsize=PLOT_FONT_SIZE - 2)
+        ax_diff.text(j, i, annot, ha="center", va="center", weight=weight, fontsize=annotation_size, color="black")
     ax_diff.set_xticks(np.arange(diff_mean.shape[1]))
     ax_diff.set_yticks(np.arange(diff_mean.shape[0]))
-    ax_diff.set_xticklabels(diff_mean.columns, rotation=45, ha="right", fontsize=PLOT_FONT_SIZE - 1)
-    ax_diff.set_yticklabels(diff_mean.index, rotation=0, fontsize=PLOT_FONT_SIZE - 1)
-    ax_diff.set_xlabel("Methods 2")
-    ax_diff.set_ylabel("Methods 1")
+    ax_diff.set_xticklabels(display_columns, rotation=45, ha="right", rotation_mode="anchor")
+    ax_diff.set_yticklabels(display_index, rotation=0)
     fig_diff.tight_layout()
 
     return fig_pct, fig_diff, percentage, diff_mean
+
+
+def _display_label(value: object) -> str:
+    labels = {
+        "NoExplanation": "No expl.",
+        "integrated_gradients": "Int. gradients",
+        "VanillaSAE": "Vanilla SAE",
+        "NeuronsAs": "Neurons",
+        "ClassesAs": "Classes",
+        "Qwen/Qwen3.5-2B": "Qwen 3.5-2B",
+        "meta-llama/Llama-3.2-3B-Instruct": "Llama 3.2-3B",
+    }
+    return labels.get(str(value), str(value))

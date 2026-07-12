@@ -25,6 +25,9 @@ scripts/
   extract_best_prompts.py  # Extract hard-coded best-method prompt subsets into data/best_prompts/
   split_prompt_file.py  # Split large prompt JSONL files into derived per-field files without touching originals
   llm_scoring.py        # Score prompts with a local HF LLM judge (CLI)
+  generate_only.py      # Generation-only counterpart to llm_scoring.py; writes data/generations/{judge}.jsonl (CLI)
+  parse_generations.py  # Parse data/generations/*.jsonl into wide sample-level predictions CSVs (CLI)
+  build_scores_v3.py    # Recompute V3 score CSVs from predictions_*.csv (CLI)
   state.py              # Summarize manifest, prompt JSONL, corrupted markers, and v2 score coverage for one judge model
   drop_prompt_rows.py   # Drop prompt JSONL rows by prompt-key field filters (CLI, writes .bak)
   drop_score_rows.py    # Drop rows from a score CSV by column=value filters (CLI, pandas, writes .bak)
@@ -44,18 +47,22 @@ utils/                        # Shared library package
   ratsim.py                   # Rationale-based prompt construction
   analysis.py                 # Shared notebook dataframe helpers for filtering, bucketed summaries, family inference, and best-config selection
   plot.py                     # Reusable plot helpers for paper figures (violins, bar plots, pairwise matrices)
+  predictions.py              # Shared helpers to parse generation JSONL rows to global class ids and load local_elements gold labels
 
 sequence.sh                   # Cartesian-product script runner (see Commands below)
 manifests/                    # Cluster command manifests; old_consim.tsv covers README Stage 1 old-ConSim generation
 notebooks/
   4_compare_consim.ipynb      # Planned: compare any two ConSim specs and any two interpretations; reproduce old-ConSim pairwise matrices
   5_compare_families.ipynb    # Planned: concept/rationale/attribution comparisons and best-method selection for Stage 3
-  6_judge_consistency.ipynb   # Planned: multi-judge best-method comparisons and paired significance tests against baselines
+  6_judge_consistency.ipynb   # Prompt-prediction correlation matrices (B1/B2/C1/C2/C3/A/R + gold + task-model) from data/predictions_*.csv
   old/                        # Archived copies of notebooks before the next-paper rewrite; keep for reference
   generation_concept_tutorial.ipynb  # Interpreto concept tutorial
 LaTeX-Simulatability-Shortcut/  # ACL paper sources (separate git subrepo)
 data/                         # Gitignored artifacts: activation/prediction caches, prompts, scores
   best_prompts/               # Planned: prompt JSONL subset for best methods only, preserving original prompt keys/schema
+  generations/                # Raw per-judge generation JSONL logs (also written by llm_scoring.py)
+  predictions_{judge}.csv     # Wide sample-level predictions from parse_generations.py; one row per prompt key, pred_0..pred_39 columns
+  consim_{judge}_v3.csv       # Recomputed scores from predictions_*.csv via build_scores_v3.py (same schema as V2)
 ```
 
 ## Import Architecture
@@ -106,6 +113,29 @@ python scripts/make_prompts_old_consim.py GE seminmf
 .venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b data/prompts/GE_concepts.jsonl
 .venv-vllm/bin/python scripts/llm_scoring.py qwen3.5-9b  # scores all data/prompts/*.jsonl files with one model load
 .venv/bin/python scripts/llm_scoring.py qwen3.5-9b --backend hf  # fallback without vLLM
+```
+
+**Generate raw judge outputs only** (no parsing/scoring; appends to `data/generations/{judge}.jsonl`):
+
+```bash
+.venv-vllm/bin/python scripts/generate_only.py qwen3.5-9b
+.venv-vllm/bin/python scripts/generate_only.py qwen3.5-9b data/prompts/GE_concepts.jsonl
+.venv/bin/python scripts/generate_only.py qwen3.5-9b --backend hf
+```
+
+**Parse existing generations into wide sample-level predictions CSVs**:
+
+```bash
+python scripts/parse_generations.py                        # all data/generations/*.jsonl -> data/predictions_*.csv
+python scripts/parse_generations.py data/generations/Qwen_Qwen3.5-9B.jsonl --overwrite
+python scripts/parse_generations.py --no-cache-n           # skip local_elements matching (no cache_n column)
+```
+
+**Recompute V3 score CSVs from predictions CSVs**:
+
+```bash
+python scripts/build_scores_v3.py                          # all data/predictions_*.csv -> data/consim_*_v3.csv
+python scripts/build_scores_v3.py data/predictions_microsoft_phi-4.csv --overwrite
 ```
 
 **Split large prompt files** (creates derived JSONL files; originals are untouched):
@@ -296,10 +326,13 @@ Positional: `judge_model`, optional one or more `prompt_file` paths. If no promp
 - **Scores** are appended to CSV: `data/consim_{model}.csv` with columns: `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score`.
 - **State coverage**: `scripts/state.py` reports valid prompt coverage as `valid% (+corrupted%)` when corrupted prompt-marker rows exist. Corrupted rows count as existing for prompt-generation rerun purposes, because prompt scripts skip those keys unless corrupted rows are explicitly dropped. Incomplete generation manifest rows ignore baseline prompt types (`B*`/`AB*`) so shared baselines do not make method-specific prompt-generation commands look missing. It also reports one-line best-prompt score coverage per judge CSV, using active keys from `data/best_prompts/*.jsonl` as the expected key set and reporting stale best-prompt keys separately. For incomplete best-prompt judges, it prints one `sbatch --array` command over the missing rows in `manifests/best_prompts.tsv`. State memory under `data/state_memory/` stores both main coverage rows and best-prompt rows so subsequent runs can show deltas for each table.
 - **Score v2 outputs**: `llm_scoring.py` writes new runs to `data/consim_{model}_v2.csv` and leaves v1 CSVs untouched. V2 columns are `dataset,model,classes_subset,seed,method,nb_concepts,interpretation,prompt_type,specification,time,score,num_correct,num_valid,num_expected`. Invalid-format answers (`None` after parsing against allowed labels) are excluded from the denominator; `score = num_correct / num_valid` only when `num_valid >= ceil(0.7 * num_expected)`, otherwise `score` is `NaN`. Raw generations are appended per prompt group to `data/generations/{model}.jsonl` for offline parser/debug reruns. Old-ConSim token budgets add a 128-token slack above the per-line estimate.
+- **Split generation/parsing pipeline**: `scripts/generate_only.py` is the generation-only counterpart to `llm_scoring.py` (same helpers via imports; skips keys already present in `data/generations/{judge}.jsonl`). `scripts/parse_generations.py` re-parses those logs into wide `data/predictions_{judge}.csv` files (one row per prompt key, `pred_0..pred_39` sample columns holding global class ids, plus `num_expected/num_valid/num_correct/cache_n`) using latest-wins deduplication on the raw key. `scripts/build_scores_v3.py` then recomputes `data/consim_{judge}_v3.csv` in the exact V2 schema by applying `compute_group_score` to the parsed counts. V3 reflects the current parser semantics, so V3 scores may differ slightly from V2 when the parser was tightened between runs. Anonymized (`Class_N`) predictions are mapped via `anonymized_class_id` in `prediction_to_global_id`; non-anonymized predictions are matched by class name.
+- **Sample metadata**: `utils.predictions.load_sample_metadata(dataset_abbrev, classes_subset, seed, cache_n)` returns per-sample `real_label` and `task_model_prediction` (as global class ids) plus the dataset-level `test_index`, loaded from `data/{task_model_slug}/local_elements_classes_*_n{cache_n}.json`. `notebooks/6_judge_consistency.ipynb` uses this to join the wide predictions CSVs with gold labels for correlation matrices.
 - **Sample selection is deterministic and cached**: `local_elements_{classes}_{nb_samples}.json` per save_root. Same seed + same classes_subset + same nb_samples = same samples across all explanation methods.
 - **Artifacts** cached aggressively under `data/` to avoid GPU recomputation.
 - **All class subsets** for a dataset are processed in a single script invocation (defined in `DATASET_CLASSES_SUBSETS` in `utils/data.py`).
 - **Reusable plotting helpers** should live in `utils/plot.py`. The paper should only need three reusable plot families: violin distributions, ranked/difference bar plots, and pairwise comparison matrices. Keep notebook-specific filtering in notebooks, but move reusable figure construction to `utils/plot.py` when it is used by more than one notebook or needed for paper exports. `utils/old_plot.py` is a reference for old-ConSim pairwise matrix behavior; do not delete it while reconstructing old-paper results.
+- **Paper plot layout**: notebooks 4-6 export directly to `LaTeX-Simulatability-Shortcut/plots/` at final single- or double-column dimensions. Keep matrix color scales hidden, violin legends inside the axes, dense p-value labels diagonal and compact (`p<.01`), and multi-dataset panels in page-width grids. Always save with `bbox_inches="tight"` and verify the resulting PDFs in the compiled two-column `main.pdf`.
 
 ## Registries in `utils/data.py`
 
