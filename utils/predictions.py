@@ -130,23 +130,29 @@ def prediction_to_global_id(
     prediction: str | None,
     classes_subset: list[int],
     class_names: list[str],
+    specification: str,
 ) -> int | None:
     """Map a parsed judge answer string to a canonical global class id.
 
     ``prediction`` should already be a member of the allowed labels for the
     prompt (as returned by :func:`predictions_from_row`), or None when the
     judge produced an unparseable answer. Handles both non-anonymized labels
-    (real class names) and anonymized labels (``Class_N``), where ``N`` is
-    interpreted as the index into ``classes_subset``.
+    (real class names) and anonymized labels (``Class_N``). Historical
+    ``old_consim`` prompts number anonymized classes by their position in the
+    subset; newer prompt builders retain the dataset's global class id.
     """
     from scripts.llm_scoring import anonymized_class_id, prediction_matches  # local import
 
     if prediction is None:
         return None
-    subset_index = anonymized_class_id(prediction)
-    if subset_index is not None:
-        if 0 <= subset_index < len(classes_subset):
-            return classes_subset[subset_index]
+    anonymized_id = anonymized_class_id(prediction)
+    if anonymized_id is not None:
+        if specification == "old_consim":
+            if 0 <= anonymized_id < len(classes_subset):
+                return classes_subset[anonymized_id]
+            return None
+        if anonymized_id in classes_subset:
+            return anonymized_id
         return None
     matches = [
         class_id

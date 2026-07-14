@@ -28,6 +28,18 @@ plt.rcParams.update(
 )
 
 
+def _holm_adjust(pvalues: dict[tuple[object, object], float]) -> dict[tuple[object, object], float]:
+    """Apply Holm's step-down correction to one displayed family of tests."""
+    ordered = sorted(pvalues, key=pvalues.get)
+    adjusted = {}
+    running_max = 0.0
+    nb_tests = len(ordered)
+    for rank, key in enumerate(ordered):
+        running_max = max(running_max, (nb_tests - rank) * pvalues[key])
+        adjusted[key] = min(running_max, 1.0)
+    return adjusted
+
+
 def plot_accuracies_violins(
     scores: pd.Series,
     *,
@@ -150,6 +162,7 @@ def plot_difference_bars(
     positive_color: str = "#4c72b0",
     negative_color: str = "#c44e52",
     pvalue_alpha: float = 0.05,
+    adjusted_pvalues: pd.Series | None = None,
 ) -> tuple[plt.Figure, np.ndarray]:
     """Plot bucketed score differences as simple signed bar plots.
 
@@ -161,10 +174,15 @@ def plot_difference_bars(
     means = grouped.mean().sort_values(ascending=False)
     stds = grouped.std().reindex(means.index)  # ensure stds aligns with means
 
-    pvalues = pd.Series(np.nan, index=means.index, dtype=float)
-    for key in means.index:
-        values = grouped.get_group(key).dropna()
-        pvalues.loc[key] = ttest_1samp(values, popmean=0).pvalue
+    if adjusted_pvalues is None:
+        raw_pvalues = {
+            key: ttest_1samp(grouped.get_group(key).dropna(), popmean=0).pvalue
+            for key in means.index
+        }
+        valid_pvalues = {key: value for key, value in raw_pvalues.items() if pd.notna(value)}
+        pvalues = pd.Series(_holm_adjust(valid_pvalues), dtype=float).reindex(means.index)
+    else:
+        pvalues = adjusted_pvalues.reindex(means.index)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -240,6 +258,12 @@ def panel_difference_bars(
         raise ValueError("Cannot plot an empty differences dataframe.")
 
     panels = list(differences.index.get_level_values(panel_col).unique())
+    raw_pvalues = {
+        (panel, comparison): ttest_1samp(values.dropna(), popmean=0).pvalue
+        for (panel, comparison), values in differences.groupby([panel_col, comparison_col])
+    }
+    valid_pvalues = {key: value for key, value in raw_pvalues.items() if pd.notna(value)}
+    adjusted_pvalues = _holm_adjust(valid_pvalues)
     ncols = min(3, len(panels))
     nrows = math.ceil(len(panels) / ncols)
     fig, axes = plt.subplots(
@@ -260,6 +284,12 @@ def panel_difference_bars(
             positive_color=positive_color,
             negative_color=negative_color,
             pvalue_alpha=pvalue_alpha,
+            adjusted_pvalues=pd.Series(
+                {
+                    comparison: adjusted_pvalues.get((panel_value, comparison), np.nan)
+                    for comparison in differences.index.get_level_values(comparison_col).unique()
+                }
+            ),
         )
 
     for ax in axes.flat[len(panels):]:
@@ -305,6 +335,7 @@ def plot_pairwise_comparison_matrices(
     diff_mean = pd.DataFrame(np.nan, index=contenders, columns=contenders)
     diff_std = pd.DataFrame(np.nan, index=contenders, columns=contenders)
     pvalues = pd.DataFrame(1.0, index=contenders, columns=contenders)
+    pair_pvalues = {}
 
     for contender in contenders:
         percentage.loc[contender, contender] = 50
@@ -331,8 +362,10 @@ def plot_pairwise_comparison_matrices(
         diff_mean.loc[c2, c1] = -diff.mean()
         diff_std.loc[c1, c2] = diff_std.loc[c2, c1] = diff.std()
         if len(common) > 1:
-            pvalue = ttest_rel(sc1, sc2).pvalue
-            pvalues.loc[c1, c2] = pvalues.loc[c2, c1] = pvalue
+            pair_pvalues[(c1, c2)] = ttest_rel(sc1, sc2).pvalue
+
+    for (c1, c2), pvalue in _holm_adjust(pair_pvalues).items():
+        pvalues.loc[c1, c2] = pvalues.loc[c2, c1] = pvalue
 
     ranking = n_contenders + 1 - (percentage >= 50).sum(axis="columns")
     order = ranking.sort_values().index

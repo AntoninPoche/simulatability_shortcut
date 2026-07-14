@@ -48,11 +48,7 @@ def preprocess(df, seeds_per_bucket=5):
     This includes filtering out certain columns, averaging duplicate rows, and aggregating seeds into buckets.
     """
     df = df.copy()
-    score = pd.to_numeric(df["score"], errors="coerce")
-    if "num_correct" in df.columns:
-        fallback_score = pd.to_numeric(df["num_correct"], errors="coerce")
-        score = score.fillna(fallback_score.where(fallback_score.between(0, 1)))
-    df["score"] = score
+    df["score"] = pd.to_numeric(df["score"], errors="coerce")
 
     required = ["dataset", "model", "classes_subset", "seed", "method", "prompt_type", "specification", "score"]
     df = df.dropna(subset=[col for col in required if col in df.columns])

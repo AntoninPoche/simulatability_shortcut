@@ -139,6 +139,7 @@ def build_output_row(
     fields = parse_key(raw_key)
     classes_subset = parse_classes_subset(fields["classes_subset"])
     class_names = class_names_for_dataset(str(fields["dataset"]))
+    specification = str(fields["specification"])
 
     string_predictions = predictions_from_row(row)
     if len(string_predictions) > MAX_SAMPLES:
@@ -151,7 +152,12 @@ def build_output_row(
     for prediction in string_predictions:
         try:
             global_predictions.append(
-                prediction_to_global_id(prediction, classes_subset, class_names)
+                prediction_to_global_id(
+                    prediction,
+                    classes_subset,
+                    class_names,
+                    specification,
+                )
             )
         except ValueError:
             global_predictions.append(None)
@@ -161,7 +167,12 @@ def build_output_row(
     for expected in expected_answers:
         try:
             expected_global.append(
-                prediction_to_global_id(expected, classes_subset, class_names)
+                prediction_to_global_id(
+                    expected,
+                    classes_subset,
+                    class_names,
+                    specification,
+                )
             )
         except ValueError:
             expected_global.append(None)
