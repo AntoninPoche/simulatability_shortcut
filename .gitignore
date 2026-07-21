@@ -1,3 +1,15 @@
 __pycache__/
-.venv
+.venv/
+.venv-vllm/
 .vscode/
+.ipynb_checkpoints/
+*.py[cod]
+
+# Local analysis outputs and expensive regeneration artifacts.
+outputs/
+data/generations/
+data/prompts/
+data/*/
+data/*.jsonl
+data/*.lock
+data/*.tmp

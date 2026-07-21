@@ -1,25 +1,26 @@
 [project]
 name = "simulatability-shortcut"
-version = "0.0.0"
+version = "0.1.0"
 requires-python = ">=3.11,<3.13"
+
+# result notebooks only
 dependencies = [
-    "nnsight",
-    "datasets",
-    "interpreto",
-    "transformers",
-    "tokenizers==0.22.2",
-    "tqdm",
     "ipykernel",
+    "matplotlib",
+    "notebook",
+    "numpy",
     "pandas",
-    "torch",
+    "scipy",
 ]
 
-[tool.uv.sources]
-torch = { index = "pytorch-cu130" }
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
-
-# UV_HTTP_TIMEOUT=300 UV_TORCH_BACKEND=cu130 uv sync --reinstall --prerelease=allow
+# get explanations and make generation
+[project.optional-dependencies]
+generation = [
+    "datasets",
+    "interpreto==0.5.0",
+    "nnsight==0.7.0",
+    "torch",
+    "tqdm",
+    "transformers",
+]
+vllm = ["vllm"]
