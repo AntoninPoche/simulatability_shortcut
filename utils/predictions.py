@@ -22,18 +22,13 @@ from utils.data import (
     MODELS_DATASETS,
     get_save_root,
 )
-
-
-KEY_FIELDS = (
-    "dataset",
-    "model",
-    "classes_subset",
-    "seed",
-    "method",
-    "nb_concepts",
-    "interpretation",
-    "prompt_type",
-    "specification",
+from utils.scoring import (
+    KEY_FIELDS,
+    anonymized_class_id,
+    extract_prediction,
+    extract_sample_ids,
+    parse_old_consim_response,
+    prediction_matches,
 )
 
 CACHE_N_RE = re.compile(r"_n(\d+)\.json$")
@@ -76,16 +71,9 @@ def thinking_from_path(path: Path) -> bool:
 def predictions_from_row(row: dict[str, Any]) -> list[str | None]:
     """Return the sample-level predicted labels (as strings) for one row.
 
-    Delegates to the parsers in ``scripts.llm_scoring`` and auto-detects
-    old-ConSim (one prompt, many expected answers) versus new/simulator
-    ConSim (one prompt per expected answer).
+    Auto-detects old-ConSim (one prompt, many expected answers) versus
+    one-sample-per-prompt formats.
     """
-    from scripts.llm_scoring import (  # local import: avoid heavy deps at module import
-        extract_prediction,
-        extract_sample_ids,
-        parse_old_consim_response,
-    )
-
     expected_answers = row["expected_answers"]
     raw_answers = row["raw_answers"]
     user_prompts = row["user_prompts"]
@@ -141,8 +129,6 @@ def prediction_to_global_id(
     ``old_consim`` prompts number anonymized classes by their position in the
     subset; newer prompt builders retain the dataset's global class id.
     """
-    from scripts.llm_scoring import anonymized_class_id, prediction_matches  # local import
-
     if prediction is None:
         return None
     anonymized_id = anonymized_class_id(prediction)

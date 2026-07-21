@@ -5,7 +5,7 @@ import torch
 from utils.consim import ConSim, PromptSetting, PromptTypes
 
 
-class ConSimV2(ConSim):
+class SimulatorConSim(ConSim):
     """ConSim prompt variant framed as simulating another classifier.
 
     This class intentionally inherits ConSim's validation, sample handling, concept
@@ -29,7 +29,7 @@ class ConSimV2(ConSim):
         top_k: int = 5,
         importance_threshold: float = 0.05,
     ) -> tuple[str, list[str], list[str]]:
-        setting = ConSimV2._resolve_prompt_setting(setting)
+        setting = SimulatorConSim._resolve_prompt_setting(setting)
 
         self._check_input_settings_correspondence(
             interesting_samples=interesting_samples,
@@ -50,7 +50,7 @@ class ConSimV2(ConSim):
         classes = {class_id: self.classes[class_id] for class_id in classes_ids}
         global_importances_dict = {class_id: global_importances[class_id] for class_id in classes_ids}
 
-        return ConSimV2._setting_to_prompt(
+        return SimulatorConSim._setting_to_prompt(
             setting=setting,
             interesting_samples=interesting_samples,
             corresponding_predictions=corresponding_predictions,
@@ -116,7 +116,7 @@ class ConSimV2(ConSim):
                     [
                         "\t{}: {}".format(
                             class_name,
-                            ConSimV2._concepts_to_string(
+                            SimulatorConSim._concepts_to_string(
                                 global_importances[class_index],
                                 concepts_interpretation,
                                 top_k=top_k,
@@ -140,7 +140,7 @@ class ConSimV2(ConSim):
 
                 if setting.lp_concepts_local_contributions:
                     pred = int(corresponding_predictions[i].item())
-                    str_importances = ConSimV2._concepts_to_string(
+                    str_importances = SimulatorConSim._concepts_to_string(
                         local_importances[i][pred],  # type: ignore[index]
                         concepts_interpretation,
                         top_k=top_k,

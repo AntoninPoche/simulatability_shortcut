@@ -14,6 +14,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import sys
@@ -200,7 +201,7 @@ def main() -> None:
                         pg,
                         allowed_answers_for_prompt_group(pg),
                         answers[start:end],
-                        "new_consim",
+                        ast.literal_eval(pg["key"])[-1],
                         args.max_new_tokens,
                         args.thinking,
                     )
@@ -248,7 +249,7 @@ def main() -> None:
                     pg,
                     allowed_answers_for_prompt_group(pg),
                     answers,
-                    "old_consim",
+                    ast.literal_eval(pg["key"])[-1],
                     max_new_tokens,
                     args.thinking,
                 )

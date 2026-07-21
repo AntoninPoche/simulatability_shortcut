@@ -1,15 +1,14 @@
-"""Build V3 score CSVs from the wide sample-level predictions CSVs.
+"""Build score CSVs from wide sample-level predictions CSVs.
 
 Reads ``data/predictions_{judge}.csv`` (produced by ``scripts/parse_generations.py``)
-and writes ``data/consim_{judge}_v3.csv`` in the same schema as the existing
-V2 score CSVs. Scores are recomputed from parsed predictions with the current
-``compute_group_score`` implementation, so V3 reflects the latest parser fixes.
+and writes ``data/consim_{judge}.csv``. Scores are recomputed from parsed
+predictions with the current ``compute_group_score`` implementation.
 
 Usage::
 
-    python scripts/build_scores_v3.py
-    python scripts/build_scores_v3.py --predictions-dir data --output-dir data
-    python scripts/build_scores_v3.py --overwrite
+    python scripts/build_scores.py
+    python scripts/build_scores.py --predictions-dir data --output-dir data
+    python scripts/build_scores.py --overwrite
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.llm_scoring import KEY_FIELDS, SCORE_COLUMNS, compute_group_score
+from utils.scoring import KEY_FIELDS, SCORE_COLUMNS, compute_group_score
 
 
 DEFAULT_PREDICTIONS_DIR = Path("data")
@@ -32,7 +31,7 @@ DEFAULT_OUTPUT_DIR = Path("data")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Recompute V3 score CSVs from wide predictions CSVs.",
+        description="Recompute score CSVs from wide predictions CSVs.",
     )
     parser.add_argument(
         "predictions_files",
@@ -54,12 +53,12 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help=f"Directory for consim_*_v3.csv (default: {DEFAULT_OUTPUT_DIR}).",
+        help=f"Directory for consim_*.csv (default: {DEFAULT_OUTPUT_DIR}).",
     )
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing consim_*_v3.csv files.",
+        help="Overwrite existing consim_*.csv files.",
     )
     return parser.parse_args()
 
@@ -75,7 +74,7 @@ def resolve_predictions_files(
 
 def output_path_for(predictions_file: Path, output_dir: Path) -> Path:
     stem = predictions_file.stem[len("predictions_"):]
-    return output_dir / f"consim_{stem}_v3.csv"
+    return output_dir / f"consim_{stem}.csv"
 
 
 def build_score_row(prediction_row: dict[str, str], now: str) -> dict[str, str]:

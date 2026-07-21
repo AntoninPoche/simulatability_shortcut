@@ -39,27 +39,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.data import iter_jsonl, LLM_MODELS, resolve_llm_model
+from utils.scoring import KEY_FIELDS as PROMPT_KEY_FIELDS, SCORE_COLUMNS as SHARED_SCORE_COLUMNS
 
 
 PROMPT_DIR = Path("data/prompts")
-KEY_FIELDS = [
-    "dataset",
-    "model",
-    "classes_subset",
-    "seed",
-    "method",
-    "nb_concepts",
-    "interpretation",
-    "prompt_type",
-    "specification",
-]
-SCORE_COLUMNS = KEY_FIELDS + [
-    "time",
-    "score",
-    "num_correct",
-    "num_valid",
-    "num_expected",
-]
+KEY_FIELDS = list(PROMPT_KEY_FIELDS)
+SCORE_COLUMNS = list(SHARED_SCORE_COLUMNS)
 SAMPLE_ID_RE = re.compile(r"\bSample_(\d+)\s*:")
 CLASS_LABEL_RE = re.compile(r"^class[\s_-]*(\d+)$", re.IGNORECASE)
 BARE_INT_RE = re.compile(r"^\d+$")
@@ -131,7 +116,7 @@ def parse_args() -> argparse.Namespace:
         choices=("hf", "vllm"),
         default=default_backend,
         help=(
-            "Generation backend. Defaults to vllm when importable, otherwise hf "
+            "Generation backend. Defaults to hf "
             f"(current default: {default_backend})."
         ),
     )
@@ -178,7 +163,7 @@ def get_score_path(judge_model: str, thinking: bool) -> Path:
     """Derive score CSV path from judge model name and thinking mode."""
     model_slug = judge_model.replace("/", "_")
     thinking_str = "_thinking" if thinking else ""
-    return Path(f"data/consim_{model_slug}{thinking_str}_v2.csv")
+    return Path(f"data/consim_{model_slug}{thinking_str}.csv")
 
 
 def get_generation_log_path(judge_model: str, thinking: bool) -> Path:
@@ -930,7 +915,7 @@ def main() -> None:
                             prompt_group,
                             allowed_answers,
                             group_answers,
-                            "new_consim",
+                            ast.literal_eval(prompt_group["key"])[-1],
                             args.max_new_tokens,
                             args.thinking,
                         )
@@ -1019,7 +1004,7 @@ def main() -> None:
                         prompt_group,
                         allowed_answers,
                         answers,
-                        "old_consim",
+                        ast.literal_eval(prompt_group["key"])[-1],
                         max_new_tokens,
                         args.thinking,
                     )

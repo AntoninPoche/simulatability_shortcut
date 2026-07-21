@@ -1,7 +1,7 @@
 """Generate simulator-framed ConSim prompts for concept experiments.
 
 This script reuses the current ConSim sample selection and concept artifacts, but
-renders prompts with ``utils.consim_v2.ConSimV2``. The key difference from
+renders prompts with ``utils.simulator_consim.SimulatorConSim``. The key difference from
 ``new_consim`` is the prompt framing: the LLM is asked to simulate a text
 classifier's predictions, not to predict the true label.
 
@@ -234,7 +234,7 @@ def main() -> None:
     import torch
 
     from utils.concepts import load_local_importances, load_or_build_concept_resources
-    from utils.consim_v2 import ConSimV2, PromptTypes
+    from utils.simulator_consim import SimulatorConSim, PromptTypes
 
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         args.device = "cpu"
@@ -281,7 +281,7 @@ def main() -> None:
         PromptTypes.C2_global_concepts_with_lp,
         PromptTypes.C3_global_and_local_concepts_with_lp,
     }
-    simulatability_metric = ConSimV2(classes=classes)
+    simulatability_metric = SimulatorConSim(classes=classes)
     total_new = 0
 
     for classes_subset in all_subsets:
