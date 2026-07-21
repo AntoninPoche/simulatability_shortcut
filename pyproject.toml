@@ -3,6 +3,7 @@ name = "simulatability-shortcut"
 version = "0.0.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "nnsight",
     "datasets",
     "interpreto",
     "transformers",
@@ -11,17 +12,10 @@ dependencies = [
     "ipykernel",
     "pandas",
     "torch",
-    "vllm",
 ]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
-vllm = { index = "vllm-nightly-cu130" }
-
-[[tool.uv.index]]
-name = "vllm-nightly-cu130"
-url = "https://wheels.vllm.ai/nightly/cu130"
-explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
